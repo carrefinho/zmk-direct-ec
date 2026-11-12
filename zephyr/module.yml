@@ -1,0 +1,8 @@
+name: zmk-ec-direct
+build:
+  cmake: .
+  kconfig: Kconfig
+  settings:
+    # Puts dts/bindings on the search path. Without it the compatible matches
+    # nothing and the build succeeds with no keyboard in it.
+    dts_root: .

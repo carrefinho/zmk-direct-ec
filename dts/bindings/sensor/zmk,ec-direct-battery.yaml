@@ -1,0 +1,39 @@
+# Copyright (c) 2026 carrefinho
+# SPDX-License-Identifier: MIT
+
+description: |
+  Battery voltage divider read by the zmk,kscan-ec-direct scan thread.
+
+  The EC driver owns the nRF SAADC, so Zephyr's adc and ZMK's
+  zmk,battery-voltage-divider cannot run beside it. The scan thread takes the
+  reading itself, right after a tripwire pass, and this device only hands out
+  the last value; a fetch never touches the converter. Point the
+  zmk,battery chosen node here.
+
+  nRF52840 only, and only with the tripwire tier enabled.
+
+compatible: "zmk,ec-direct-battery"
+
+include: sensor-device.yaml
+
+properties:
+  ain-channel:
+    type: int
+    required: true
+    description: AIN index of the divider's midpoint (AIN7 on the XIAO nRF52840).
+
+  power-gpios:
+    type: phandle-array
+    description: |
+      Enables the divider while active. On the XIAO nRF52840 this is P0.14,
+      open drain, active low, the same flags the stock board uses.
+
+  output-ohms:
+    type: int
+    required: true
+    description: Resistance across the ADC input (the bottom resistor).
+
+  full-ohms:
+    type: int
+    required: true
+    description: Total resistance of the divider.

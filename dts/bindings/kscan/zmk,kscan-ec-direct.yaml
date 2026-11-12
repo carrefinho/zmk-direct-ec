@@ -1,0 +1,143 @@
+# Copyright (c) 2026 carrefinho
+# SPDX-License-Identifier: MIT
+
+description: |
+  Electrostatic-capacitive matrix read directly by the SoC ADC.
+
+  No analog front end: no op-amp, no analog mux, no integrator cap. Each sense
+  line wires straight to its own ADC channel and each strobe to a GPIO. A key
+  couples its strobe to its sense line, and the driver reads how far a strobe
+  edge moves the line.
+
+  The driver reports keys as an input device at (strobe, sense line), so the
+  node goes in a zmk,physical-layout's `input` property, with a matrix
+  transform of `rows` = strobes and `columns` = sense lines.
+
+  nRF52840: the per-key pass converts every sense line at once in SAADC scan
+  mode, and an idle board can drop to a low-power tripwire pass. See
+  CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE.
+
+  SAMD21 and RP2040: the pass takes one cell at a time. The sense line is
+  pulled through the pad's own weak pull (prime), released, converted
+  (reference), the strobe moved, converted again (test), the strobe returned.
+  bias-us, prime-conversions, settle-us, bias-pull-up and sense-strobe-masks
+  tune that pass and are ignored on nRF52840. These parts scan continuously.
+
+  Zephyr's ADC driver must be disabled on the board (`&adc { status =
+  "disabled"; };`). This driver owns the converter.
+
+compatible: "zmk,kscan-ec-direct"
+
+include: base.yaml
+
+properties:
+  ain-channels:
+    type: array
+    required: true
+    description: |
+      Converter channel number per sense line: the AIN index on nRF52840,
+      the MUXPOS value on SAMD21, AINSEL 0-3 on RP2040. At most 8.
+
+  col-gpios:
+    type: phandle-array
+    required: true
+    description: |
+      The same pins as ain-channels, in the same order, declared as GPIOs.
+      Devicetree cannot express one pin in both roles from a single property,
+      so both are given and the driver checks at init that they agree.
+
+  strobe-gpios:
+    type: phandle-array
+    required: true
+    description: |
+      One GPIO per strobe, at most 16. Driven push-pull, never tri-stated.
+      GPIO_ACTIVE_LOW makes the strobe idle high and its edge a fall, which is
+      what bias-pull-up needs.
+
+  press-threshold:
+    type: int
+    default: 200
+    description: |
+      Counts above the released baseline to call a key pressed. Set it from
+      the board: `ecd status` shows what each key reads released and pressed.
+      Somewhere around 40 % of the weakest key's pressed reading is a good
+      start, as long as that clears idle noise and what a pressed neighbour
+      adds several times over.
+
+  release-threshold:
+    type: int
+    default: 140
+    description: |
+      Counts above baseline under which a pressed key releases. Below
+      press-threshold, for hysteresis.
+
+  poll-interval-ms:
+    type: int
+    default: 4
+    description: |
+      Period of the per-key pass. The pass has to fit in it: its length grows
+      with strobes, sense lines and NAVG.
+
+  load-comp-scale:
+    type: int
+    default: 0
+    description: |
+      Sense-line loading compensation; 0 is off. Every pressed key adds to
+      its sense line's capacitance, so the other keys on the line read low,
+      by 5-20 % per held key depending on how many keys share the line. With
+      this set, each pass scales every reading on a line by
+      (K - sum of baselines) / (K - sum of readings), which returns released
+      keys to their baseline and makes a pressed key read the same whatever
+      else is held. K is this property, in counts: what a key would read if
+      it were the line's entire capacitance. Fit it on the board: hold all
+      but one key of a line and choose the K that brings the released key
+      back to zero (`ecd comp <K>` changes it live). Thresholds then apply to
+      the compensated readings.
+
+  bias-us:
+    type: int
+    default: 0
+    description: |
+      Pair pass only. Microseconds to hold the pull before the priming
+      conversions. 0 has been enough with up to ten keys on a line. Raise it
+      if the primes do not bring the line to the same level every time.
+
+  prime-conversions:
+    type: int
+    default: 2
+    description: |
+      Pair pass only. Throwaway conversions taken under the pull before it is
+      released.
+
+  settle-us:
+    type: int
+    default: 0
+    description: |
+      Pair pass only. Microseconds to idle after the strobe returns, before
+      the next cell.
+
+  bias-pull-up:
+    type: boolean
+    description: |
+      Pair pass only. Prime with the pad's weak pull-up instead of its
+      pull-down, parking the line near the top of the converter's range. Pair
+      it with strobe-gpios declared GPIO_ACTIVE_LOW so the edge is a fall: a
+      rising edge from a line already near VDD clips at full scale. The pass
+      negates the difference for active-low strobes, so a press stays
+      positive.
+
+      Use it on SAMD21. There a random fraction of conversions of a
+      high-impedance line read about 75 counts low, and how often falls with
+      the line's level: 16 % near 500 counts, none above 3600. With the
+      pull-up prime the line sits high enough that it does not happen.
+
+  sense-strobe-masks:
+    type: array
+    description: |
+      Usually left out. Without it, the driver reads the matrix transform of
+      every physical layout whose input is this node and scans only the cells
+      the transforms list. Cells outside the set are not acquired (pair pass)
+      and read 0. If no layout points at this node, every cell is scanned.
+
+      Set it only to override that: one bitmask per sense line, in
+      ain-channels order, bit r set meaning strobe r is scanned on that line.
