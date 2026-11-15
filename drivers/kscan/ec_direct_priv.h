@@ -70,6 +70,11 @@ struct ec_direct_data {
 	 * they are flags it picks up rather than calls. */
 	bool recalibrate;
 	bool force_pass;
+	/* Bench mode, see zmk_ec_direct_bench(). */
+	bool bench;
+	bool bench_applied; /* the host has been told about it */
+	int16_t *snap;      /* where the next per-key pass is copied, or NULL */
+	struct k_sem snap_done;
 
 	/* Tripwire tier. Unused when it is compiled out. */
 	enum zmk_ec_direct_tier tier;

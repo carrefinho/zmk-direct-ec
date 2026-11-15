@@ -27,6 +27,7 @@ struct zmk_ec_direct_cell {
 	int32_t value;    /* latest reading, after load compensation */
 	int32_t baseline; /* released level from the last calibration */
 	bool pressed;
+	bool scanned; /* false for a cell no layout lists; it reads 0 */
 };
 
 /** Snapshot one cell. @p row is the strobe, @p col the sense line. */
@@ -44,6 +45,22 @@ int zmk_ec_direct_force_pass(const struct device *dev);
 
 void zmk_ec_direct_set_thresholds(const struct device *dev, uint16_t press, uint16_t release);
 void zmk_ec_direct_get_thresholds(const struct device *dev, uint16_t *press, uint16_t *release);
+
+/*
+ * Bench mode, for the bring-up commands (CONFIG_ZMK_KSCAN_EC_DIRECT_BRINGUP).
+ * While it is on, every slot runs the per-key pass and no key is reported, so
+ * pressing keys on the board under test does not type into the terminal.
+ * Keys held when it starts are released to the host, and keys still held when
+ * it ends are reported pressed.
+ */
+void zmk_ec_direct_bench(const struct device *dev, bool on);
+
+/**
+ * Copy the next per-key pass, after load compensation, to @p out (rows * cols
+ * entries, strobe-major). Bench mode only: outside it the per-key pass may not
+ * run at all.
+ */
+int zmk_ec_direct_read_pass(const struct device *dev, int16_t *out, k_timeout_t timeout);
 
 /** The binding's load-comp-scale; 0 turns compensation off. */
 void zmk_ec_direct_set_load_comp(const struct device *dev, uint16_t scale);

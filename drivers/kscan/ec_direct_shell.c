@@ -10,6 +10,7 @@
  */
 
 #include <stdlib.h>
+#include <string.h>
 
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
@@ -17,6 +18,8 @@
 #include <zephyr/shell/shell.h>
 
 #include <zmk_ec_direct/ec_direct.h>
+
+#include "ec_direct_shell.h"
 
 #define DT_DRV_COMPAT zmk_kscan_ec_direct
 
@@ -136,12 +139,34 @@ static int cmd_threshold(const struct shell *sh, size_t argc, char **argv)
 
 static int cmd_comp(const struct shell *sh, size_t argc, char **argv)
 {
+#if IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_BRINGUP)
+	if (argc == 2 && !strcmp(argv[1], "fit")) {
+		return ecd_cmd_comp_fit(sh, dev);
+	}
+#endif
 	if (argc == 2) {
 		zmk_ec_direct_set_load_comp(dev, (uint16_t)strtoul(argv[1], NULL, 0));
 	}
 	shell_print(sh, "load-comp-scale %u", zmk_ec_direct_get_load_comp(dev));
 	return 0;
 }
+
+#if IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_BRINGUP)
+static int cmd_check(const struct shell *sh, size_t argc, char **argv)
+{
+	return ecd_cmd_check(sh, dev);
+}
+
+static int cmd_survey(const struct shell *sh, size_t argc, char **argv)
+{
+	return ecd_cmd_survey(sh, dev);
+}
+
+static int cmd_report(const struct shell *sh, size_t argc, char **argv)
+{
+	return ecd_cmd_report(sh, dev);
+}
+#endif
 
 SHELL_STATIC_SUBCMD_SET_CREATE(
 	sub_ecd,
@@ -153,8 +178,19 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 	SHELL_CMD_ARG(threshold, NULL, "Show, or set until reset: threshold <press> <release>",
 		      cmd_threshold, 1, 2),
 	SHELL_CMD_ARG(comp, NULL,
-		      "Show, or set until reset, the load compensation scale: comp <K>, 0 = off",
+		      "Show, or set until reset, the load compensation scale: comp <K>, 0 = off"
+		      IF_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_BRINGUP,
+				 (". comp fit: measure it from a row of held keys")),
 		      cmd_comp, 1, 1),
+#if IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_BRINGUP)
+	SHELL_CMD_ARG(check, NULL,
+		      "Hands off: every key's resting level and noise, odd cells flagged",
+		      cmd_check, 1, 0),
+	SHELL_CMD_ARG(survey, NULL, "Press every key once: each key's swing, weakest keys",
+		      cmd_survey, 1, 0),
+	SHELL_CMD_ARG(report, NULL, "What check, comp fit and survey found, ready to paste",
+		      cmd_report, 1, 0),
+#endif
 	SHELL_SUBCMD_SET_END);
 
 SHELL_CMD_REGISTER(ecd, &sub_ecd, "EC matrix", NULL);

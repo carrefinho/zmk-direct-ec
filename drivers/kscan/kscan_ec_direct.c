@@ -516,11 +516,35 @@ static bool tripwire_after_pass(const struct ec_direct_config *cfg, struct ec_di
 
 /* --- scan ------------------------------------------------------------ */
 
+#define BENCH(data) (IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_BRINGUP) && (data)->bench)
+
+static void report_cell(const struct device *dev, uint8_t r, uint8_t c, bool pressed)
+{
+	input_report_abs(dev, INPUT_ABS_X, c, false, K_FOREVER);
+	input_report_abs(dev, INPUT_ABS_Y, r, false, K_FOREVER);
+	input_report_key(dev, INPUT_BTN_TOUCH, pressed, true, K_FOREVER);
+}
+
 /* Compare every cell against its thresholds and report the changes. */
 static void report_keys(const struct device *dev)
 {
 	const struct ec_direct_config *cfg = dev->config;
 	struct ec_direct_data *data = dev->data;
+	bool mute = BENCH(data);
+
+	if (mute != data->bench_applied) {
+		/* Entering bench mode releases what the host thinks is held;
+		 * leaving it reports what really is. `pressed` keeps tracking
+		 * in between, so the tiers see held keys as usual. */
+		for (uint8_t r = 0; r < cfg->rows; r++) {
+			for (uint8_t c = 0; c < cfg->cols; c++) {
+				if (data->pressed[r * cfg->cols + c]) {
+					report_cell(dev, r, c, !mute);
+				}
+			}
+		}
+		data->bench_applied = mute;
+	}
 
 	for (uint8_t r = 0; r < cfg->rows; r++) {
 		for (uint8_t c = 0; c < cfg->cols; c++) {
@@ -546,9 +570,9 @@ static void report_keys(const struct device *dev)
 			data->pressed[i] = now;
 			data->confirm[i] = 0;
 			data->hold_changed = true;
-			input_report_abs(dev, INPUT_ABS_X, c, false, K_FOREVER);
-			input_report_abs(dev, INPUT_ABS_Y, r, false, K_FOREVER);
-			input_report_key(dev, INPUT_BTN_TOUCH, now, true, K_FOREVER);
+			if (!mute) {
+				report_cell(dev, r, c, now);
+			}
 		}
 	}
 }
@@ -598,6 +622,12 @@ static void ec_direct_thread(void *p1, void *p2, void *p3)
 		}
 
 #if IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE)
+		if (BENCH(data)) {
+			/* Per-key pass every slot: no tripwire, no hold watch. */
+			tier_set(data, ZMK_EC_DIRECT_TIER_ACTIVE);
+			data->last_active_ms = k_uptime_get();
+			data->hold_watch = false;
+		}
 		if (data->tier == ZMK_EC_DIRECT_TIER_TRIPWIRE && !tripwire_tick(cfg, data)) {
 			continue;
 		}
@@ -610,6 +640,13 @@ static void ec_direct_thread(void *p1, void *p2, void *p3)
 		read_pass(cfg, data->value);
 		load_comp(cfg, data);
 		report_keys(dev);
+		if (BENCH(data) && data->snap) {
+			for (size_t i = 0; i < (size_t)cfg->rows * cfg->cols; i++) {
+				data->snap[i] = (int16_t)CLAMP(data->value[i], INT16_MIN, INT16_MAX);
+			}
+			data->snap = NULL;
+			k_sem_give(&data->snap_done);
+		}
 
 #if IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE)
 		if (tripwire_after_pass(cfg, data)) {
@@ -662,7 +699,28 @@ int zmk_ec_direct_get_cell(const struct device *dev, uint8_t row, uint8_t col,
 	out->value = data->value[i];
 	out->baseline = data->baseline[i];
 	out->pressed = data->pressed[i];
+	out->scanned = !cfg->col_strobe_mask || (cfg->col_strobe_mask[col] & BIT(row));
 	return 0;
+}
+
+void zmk_ec_direct_bench(const struct device *dev, bool on)
+{
+	struct ec_direct_data *data = dev->data;
+
+	data->bench = on;
+}
+
+int zmk_ec_direct_read_pass(const struct device *dev, int16_t *out, k_timeout_t timeout)
+{
+	struct ec_direct_data *data = dev->data;
+	int rc;
+
+	k_sem_reset(&data->snap_done);
+	data->snap = out;
+	rc = k_sem_take(&data->snap_done, timeout);
+	/* The scan thread outranks any caller, so it is never mid-copy here. */
+	data->snap = NULL;
+	return rc;
 }
 
 void zmk_ec_direct_get_size(const struct device *dev, uint8_t *rows, uint8_t *cols)
@@ -746,6 +804,7 @@ static int ec_direct_init(const struct device *dev)
 	int rc;
 
 	data->dev = dev;
+	k_sem_init(&data->snap_done, 0, 1);
 	data->init_stage = ZMK_EC_DIRECT_INIT_STROBES;
 
 	for (uint8_t r = 0; r < cfg->rows; r++) {
