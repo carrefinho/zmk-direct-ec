@@ -28,7 +28,7 @@ Go through your board's `.dts` and check every peripheral against your pin list.
 - **NFC pins on nRF52840.** Caroline strobes on P0.09 and P0.10. They need `nfct-pins-as-gpios` in `&uicr`. A fresh chip resets once on first boot while it writes this.
 - **Shared analog switches.** On the XIAO RP2040 Plus, D3 reaches GPIO29 through an analog switch that also connects the battery divider. A `gpio-hog` on GPIO24 holds it on the D3 side.
 
-The `ecd` shell doesn't need the board's console UART. The `ec-direct-shell` snippet adds its own USB serial port, so you can disable that UART if you need its pins.
+The `ec` shell doesn't need the board's console UART. The `direct-ec-shell` snippet adds its own USB serial port, so you can disable that UART if you need its pins.
 
 ## Step 2: sense lines
 
@@ -86,7 +86,7 @@ ec_transform: ec_transform {
 
 On the SAMD21 build the left half of each row is its own sense line (4 to 7), so the map jumps between line numbers mid-row. Get this wrong and keys come out on the wrong half, which is easy to spot with the default keymap.
 
-The driver also uses the transform to decide which spots to scan. Any (strobe, sense line) pair the map doesn't list has no key, so the driver skips it and reports 0 there. On Caroline's SAMD21 build that skips 44 of 80 spots, which matters on a chip that converts one spot at a time. You don't set anything for this. The flip side: a key missing from the map is never scanned, so it won't show up in `ecd status` either. If you need to scan spots outside the map, `sense-strobe-masks` in the binding overrides it.
+The driver also uses the transform to decide which spots to scan. Any (strobe, sense line) pair the map doesn't list has no key, so the driver skips it and reports 0 there. On Caroline's SAMD21 build that skips 44 of 80 spots, which matters on a chip that converts one spot at a time. You don't set anything for this. The flip side: a key missing from the map is never scanned, so it won't show up in `ec status` either. If you need to scan spots outside the map, `sense-strobe-masks` in the binding overrides it.
 
 The driver is an input device, not a kscan, so it goes in the physical layout's `input` property instead of `kscan`:
 
@@ -103,7 +103,7 @@ ZMK's docs only show `kscan`. `input` is in the [binding](https://github.com/zmk
 
 ## Step 5: first flash
 
-Start with a bench config: a one-layer keymap where every key types something distinct, thresholds set loose, and the `ecd` shell. Build with `-S ec-direct-shell`, or `snippet: ec-direct-shell` in `build.yaml`. Add to the `.conf`:
+Start with a bench config: a one-layer keymap where every key types something distinct, thresholds set loose, and the `ec` shell. Build with `-S direct-ec-shell`, or `snippet: direct-ec-shell` in `build.yaml`. Add to the `.conf`:
 
 ```
 CONFIG_INPUT=y
@@ -115,16 +115,16 @@ Thresholds from another board are fine to boot with. Caroline's first images use
 
 **No key may be held at power-on.** The board takes each key's released level when it starts.
 
-Flash, open the shell's serial port (the board shows a second one with the snippet), and run `ecd rest` with your hands off. It prints each key's resting level and noise, and flags keys that look open, held, shorted or much noisier than the rest. A whole strobe or sense line that fails together is named once, with its keys, so you can go straight to that pin.
+Flash, open the shell's serial port (the board shows a second one with the snippet), and run `ec rest` with your hands off. It prints each key's resting level and noise, and flags keys that look open, held, shorted or much noisier than the rest. A whole strobe or sense line that fails together is named once, with its keys, so you can go straight to that pin.
 
-Then run `ecd status` while you hold keys, and check that:
+Then run `ec status` while you hold keys, and check that:
 
 - Pressing a key moves only that key, and by a lot more than the idle wobble.
 - A finger near a pad moves one sense line's keys together. If a group of keys moves together that shouldn't share a line, your `ain-channels` and `col-gpios` are out of step, or a jumper is wrong.
 
 ## Step 6: timing
 
-`poll-interval-ms` sets the scan rate. The pass has to finish inside it, and the time a pass takes depends on the chip, the number of cells and `CONFIG_ZMK_KSCAN_EC_DIRECT_NAVG` (samples per key per pass).
+`poll-interval-ms` sets the scan rate. The pass has to finish inside it, and the time a pass takes depends on the chip, the number of cells and `CONFIG_ZMK_KSCAN_DIRECT_EC_NAVG` (samples per key per pass).
 
 Caroline's numbers, 36 keys:
 
@@ -136,9 +136,9 @@ Caroline's numbers, 36 keys:
 
 SAMD21 is the tight one. A conversion takes 5 µs and each cell needs four, so NAVG 4 at 36 cells ran 5.1 ms and missed a 5 ms period. Caroline drops to NAVG 3, which is still a real median.
 
-On RP2040, use `CONFIG_ZMK_KSCAN_EC_DIRECT_MEAN=y`. Its converter doesn't throw stray samples, and the mean was quieter than the median on a noisy USB supply.
+On RP2040, use `CONFIG_ZMK_KSCAN_DIRECT_EC_MEAN=y`. Its converter doesn't throw stray samples, and the mean was quieter than the median on a noisy USB supply.
 
-For SAMD21 and RP2040, Caroline found `settle-us = <0>` read the same as 200 and made the pass five times faster. Try 0 first and compare `ecd status` against a longer settle. Both run `prime-conversions = <2>`. Dropping to one prime on SAMD21 shifted one cell's resting level by 59 counts, so keep two unless you've checked.
+For SAMD21 and RP2040, Caroline found `settle-us = <0>` read the same as 200 and made the pass five times faster. Try 0 first and compare `ec status` against a longer settle. Both run `prime-conversions = <2>`. Dropping to one prime on SAMD21 shifted one cell's resting level by 59 counts, so keep two unless you've checked.
 
 ## Step 7: thresholds and load compensation
 
@@ -148,13 +148,13 @@ Do this on the fully assembled board, with plate, domes and housings. The bare P
 
 Every held key makes the other keys on its sense line read lower. On Caroline's SAMD21 build, each held key took 15–20 % off the rest of its five-key line. With all five down, Q fell from 284 to 137, and an unpressed key read about −75. On the ten-key lines it was 5–9 % per key. So a threshold that works for single presses can miss keys during fast rolls.
 
-`load-comp-scale` corrects this, and `ecd fit` measures it. It shows the keys on one sense line. Press at least four of them one after another, as many as is comfortable, keep them all down, then let go. Holding every key on a long line doesn't make K any better. Pressing each key about as hard as the last does, since one finger's pressure moves that key's estimate by up to 20 %. Each key gives an estimate, and it moves on to the next line. Do as many lines as you like: it stops 10 s after the last key, or when every line is done. K is the median of all the estimates, applied until reset.
+`load-comp-scale` corrects this, and `ec fit` measures it. It shows the keys on one sense line. Press at least four of them one after another, as many as is comfortable, keep them all down, then let go. Holding every key on a long line doesn't make K any better. Pressing each key about as hard as the last does, since one finger's pressure moves that key's estimate by up to 20 %. Each key gives an estimate, and it moves on to the next line. Do as many lines as you like: it stops 10 s after the last key, or when every line is done. K is the median of all the estimates, applied until reset.
 
-The good range is broad. Caroline's hand-tuned values were 3600 (nRF52840), 3850 (SAMD21) and 4000 (RP2040), each a bit under 4095. `ecd fit` later gave 3830 and 3864 on the nRF52840 and SAMD21 boards. K belongs to the board and controller, so refit it if either changes.
+The good range is broad. Caroline's hand-tuned values were 3600 (nRF52840), 3850 (SAMD21) and 4000 (RP2040), each a bit under 4095. `ec fit` later gave 3830 and 3864 on the nRF52840 and SAMD21 boards. K belongs to the board and controller, so refit it if either changes.
 
 ### Swing per key
 
-Run `ecd calibrate` after `ecd fit`, because K changes even a lone key's reading. It asks you to press every key once, all the way down, and prints each key's swing on the board. It lists the weakest keys, keys you didn't press, and keys that need a deeper press than the rest. If keys next to a held one dipped or rose a lot, it tells you K is off and to run `ecd fit` again.
+Run `ec calibrate` after `ec fit`, because K changes even a lone key's reading. It asks you to press every key once, all the way down, and prints each key's swing on the board. It lists the weakest keys, keys you didn't press, and keys that need a deeper press than the rest. If keys next to a held one dipped or rose a lot, it tells you K is off and to run `ec fit` again.
 
 You want the weakest key. Caroline's spread before compensation:
 
@@ -168,13 +168,13 @@ With compensation on, the SAMD21's weakest went from 284 to 346. The compensated
 
 ### Picking thresholds
 
-`ecd rest` gives the idle noise. Then:
+`ec rest` gives the idle noise. Then:
 
 - Press threshold about 40–45 % of the weakest compensated key.
 - Release threshold about two thirds of the press threshold.
 - Both well clear of idle noise, including with a full line held, since compensation scales noise up too (about 1.5× on Caroline).
 
-Try them live with `ecd threshold <press> <release>`. Caroline's final values:
+Try them live with `ec threshold <press> <release>`. Caroline's final values:
 
 | Controller | Press | Release | `load-comp-scale` |
 |---|---|---|---|
@@ -182,7 +182,7 @@ Try them live with `ecd threshold <press> <release>`. Caroline's final values:
 | SAMD21 | 150 | 100 | 3850 |
 | RP2040 | 100 | 65 | 4000 |
 
-Nothing set from the shell is saved. `ecd export` prints the thresholds, `load-comp-scale` and the per-key table as devicetree lines. Copy them into the overlay, with a comment saying where they came from. Caroline's overlays keep the measurements next to the values, which helps when you come back to retune.
+Nothing set from the shell is saved. `ec export` prints the thresholds, `load-comp-scale` and the per-key table as devicetree lines. Copy them into the overlay, with a comment saying where they came from. Caroline's overlays keep the measurements next to the values, which helps when you come back to retune.
 
 ### Check on a bad power supply
 
@@ -190,21 +190,21 @@ USB-powered boards should be checked on the worst charger you have. On a cheap p
 
 ## Step 8: nRF52840 power settings
 
-Only nRF52840 has the low-power idle scan. When nothing is pressed, it raises every strobe at once and checks each sense line in one go. When a line moves past `CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE_THRESHOLD`, the full scan runs.
+Only nRF52840 has the low-power idle scan. When nothing is pressed, it raises every strobe at once and checks each sense line in one go. When a line moves past `CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE_THRESHOLD`, the full scan runs.
 
-To set the threshold, press each key with the idle scan running and note how far its line moves, then watch the quiet maximum in `ecd status`. Caroline's presses moved 210–315 and the quiet maximum was +14, so 70 sits at a third of the weakest press and five times the quiet ceiling.
+To set the threshold, press each key with the idle scan running and note how far its line moves, then watch the quiet maximum in `ec status`. Caroline's presses moved 210–315 and the quiet maximum was +14, so 70 sits at a third of the weakest press and five times the quiet ceiling.
 
 Leave `CONFIG_ZMK_SLEEP` off, which is ZMK's [default](https://zmk.dev/docs/config/power). An EC key can't wake the chip from deep sleep, and the idle scan is already the low-power state.
 
-For battery level, use `zmk,ec-direct-battery` in place of the board's divider and point `zmk,battery` at it. The README has the node.
+For battery level, use `zmk,direct-ec-battery` in place of the board's divider and point `zmk,battery` at it. The README has the node.
 
 Caroline measured 42 µA idle and about 0.6 mA typing with BLE connected. Getting there also took the usual nRF low-power steps: console and logging off, and the XIAO's unused QSPI flash put to sleep with [zmk-feature-xiao-ble-qspi-suspend](https://github.com/carrefinho/zmk-feature-xiao-ble-qspi-suspend). Caroline's `.conf` has the list.
 
-Set `CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE=n` if the board is always on USB.
+Set `CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE=n` if the board is always on USB.
 
 ## Step 9: the release build
 
-Once the numbers are in the overlay, build without the `ec-direct-shell` snippet before you add your real keymap. On SAMD21, Caroline's bench shell plus its full keymap ran out of RAM by 2.7 kB.
+Once the numbers are in the overlay, build without the `direct-ec-shell` snippet before you add your real keymap. On SAMD21, Caroline's bench shell plus its full keymap ran out of RAM by 2.7 kB.
 
 ## Checklist
 

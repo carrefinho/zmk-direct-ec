@@ -1,4 +1,4 @@
-# zmk-ec-direct
+# zmk-direct-ec
 
 A ZMK module for electrostatic-capacitive keyboards that have no analog front end.
 
@@ -30,7 +30,7 @@ manifest:
     - name: carrefinho
       url-base: https://github.com/carrefinho
   projects:
-    - name: zmk-ec-direct
+    - name: zmk-direct-ec
       remote: carrefinho
       revision: main
 ```
@@ -42,7 +42,7 @@ Then describe the matrix in the shield's overlay. The sense pins are listed twic
 
 / {
     ec_kscan: ec_kscan {
-        compatible = "zmk,kscan-ec-direct";
+        compatible = "zmk,kscan-direct-ec";
 
         ain-channels = <0 1 4 5>;
         col-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>, <&gpio0 3 GPIO_ACTIVE_HIGH>,
@@ -59,15 +59,15 @@ Then describe the matrix in the shield's overlay. The sense pins are listed twic
 
 The driver is an input device that reports keys at (strobe, sense line). Reference it from the `input` property of your `zmk,physical-layout` node, with a matrix transform whose `rows` is the number of strobes and `columns` the number of sense lines. Do not also set a `kscan` property or a `zmk,kscan` chosen node. A matrix can have up to 8 sense lines, 16 strobes and 80 cells, and a build can have one such node.
 
-`press-threshold` and `release-threshold` are in ADC counts above each key's released level. `load-comp-scale` corrects for the fact that every held key adds capacitance to its sense line and makes the other keys on that line read lower; it is off by default and worth fitting on boards with many keys per line. The remaining properties (`bias-us`, `prime-conversions`, `settle-us`, `bias-pull-up`) only apply to SAMD21 and RP2040. The driver skips any cell the matrix transform doesn't list; `sense-strobe-masks` overrides that, and is rarely needed. All of them are documented in `dts/bindings/kscan/zmk,kscan-ec-direct.yaml`.
+`press-threshold` and `release-threshold` are in ADC counts above each key's released level. `load-comp-scale` corrects for the fact that every held key adds capacitance to its sense line and makes the other keys on that line read lower; it is off by default and worth fitting on boards with many keys per line. The remaining properties (`bias-us`, `prime-conversions`, `settle-us`, `bias-pull-up`) only apply to SAMD21 and RP2040. The driver skips any cell the matrix transform doesn't list; `sense-strobe-masks` overrides that, and is rarely needed. All of them are documented in `dts/bindings/kscan/zmk,kscan-direct-ec.yaml`.
 
-The Kconfig options are in `drivers/kscan/Kconfig`. The ones most boards will touch are `CONFIG_ZMK_KSCAN_EC_DIRECT_NAVG`, the number of samples taken per key per pass (default 4), the choice of how those samples are combined (median, trimmed mean or mean), and on nRF52840 `CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE_THRESHOLD`, which sets how far a sense line has to move to wake the per-key scan. Set `CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE=n` for an nRF52840 board that is always on USB.
+The Kconfig options are in `drivers/kscan/Kconfig`. The ones most boards will touch are `CONFIG_ZMK_KSCAN_DIRECT_EC_NAVG`, the number of samples taken per key per pass (default 4), the choice of how those samples are combined (median, trimmed mean or mean), and on nRF52840 `CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE_THRESHOLD`, which sets how far a sense line has to move to wake the per-key scan. Set `CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE=n` for an nRF52840 board that is always on USB.
 
-For battery level on nRF52840, add a `zmk,ec-direct-battery` node in place of `zmk,battery-voltage-divider` and point the `zmk,battery` chosen node at it. It takes the same divider description:
+For battery level on nRF52840, add a `zmk,direct-ec-battery` node in place of `zmk,battery-voltage-divider` and point the `zmk,battery` chosen node at it. It takes the same divider description:
 
 ```dts
 ec_battery: ec_battery {
-    compatible = "zmk,ec-direct-battery";
+    compatible = "zmk,direct-ec-battery";
     ain-channel = <7>;
     power-gpios = <&gpio0 14 (GPIO_OPEN_DRAIN | GPIO_ACTIVE_LOW)>;
     output-ohms = <510000>;
@@ -79,28 +79,28 @@ The scan thread reads the divider between idle passes, so the value does not upd
 
 ## Measuring a board
 
-Signal levels depend on the PCB, the domes and the plate, so thresholds have to be measured on the actual board. Build with the `ec-direct-shell` snippet to get the `ecd` commands on a USB serial port: `-S ec-direct-shell` on the `west build` line, or `snippet: ec-direct-shell` in `build.yaml`. It works on nRF52840, SAMD21 and RP2040, and the board still types. It's an image for measuring, not the one to run day to day.
+Signal levels depend on the PCB, the domes and the plate, so thresholds have to be measured on the actual board. Build with the `direct-ec-shell` snippet to get the `ec` commands on a USB serial port: `-S direct-ec-shell` on the `west build` line, or `snippet: direct-ec-shell` in `build.yaml`. It works on nRF52840, SAMD21 and RP2040, and the board still types. It's an image for measuring, not the one to run day to day.
 
 The commands, in the order a board designer runs them:
 
 | Command | What you do | What you get |
 |---|---|---|
-| `ecd rest` | keep your hands off | each key's resting level and noise; open, held, shorted or noisy keys flagged |
-| `ecd fit` | hold the keys it shows down one after another, then let go | `load-comp-scale`, applied until reset |
-| `ecd calibrate` | press every key once | each key's swing; weak, missing and hard-to-press keys |
-| `ecd export` | nothing | the thresholds, `load-comp-scale` and the per-key table as devicetree lines to paste |
+| `ec rest` | keep your hands off | each key's resting level and noise; open, held, shorted or noisy keys flagged |
+| `ec fit` | hold the keys it shows down one after another, then let go | `load-comp-scale`, applied until reset |
+| `ec calibrate` | press every key once | each key's swing; weak, missing and hard-to-press keys |
+| `ec export` | nothing | the thresholds, `load-comp-scale` and the per-key table as devicetree lines to paste |
 
-Someone checking a build of an existing design only needs `ecd rest`, then `ecd calibrate`.
+Someone checking a build of an existing design only needs `ec rest`, then `ec calibrate`.
 
 `fit`, `calibrate` and `rest` draw the board from the selected physical layout when it has key positions, and fall back to a strobe × sense line grid when it doesn't. While a command runs, no key reaches the host, so pressing keys doesn't type into the terminal. Every command ends by itself.
 
-A press threshold around 40 % of the weakest key's swing, with the release threshold at about two thirds of that, is a reasonable starting point. `ecd threshold <press> <release>` and `ecd comp <K>` set values on the running board so you can try them. `ecd zero` takes the resting levels again. `ecd status` prints one pass of every cell's baseline and reading. On nRF52840 it also shows what each sense line reads in the idle pass and the largest reading seen while quiet; the tripwire threshold should sit several times above that quiet maximum and well below what the weakest key adds.
+A press threshold around 40 % of the weakest key's swing, with the release threshold at about two thirds of that, is a reasonable starting point. `ec threshold <press> <release>` and `ec comp <K>` set values on the running board so you can try them. `ec zero` takes the resting levels again. `ec status` prints one pass of every cell's baseline and reading. On nRF52840 it also shows what each sense line reads in the idle pass and the largest reading seen while quiet; the tripwire threshold should sit several times above that quiet maximum and well below what the weakest key adds.
 
 Nothing set from the shell is stored. Once the numbers are right, put them in the overlay and the shield's `.conf`.
 
 ## Limitations
 
-The resting levels are taken at power-on, so no key may be held while the board starts. `ecd zero` takes them again. There is no stored calibration yet, and the thresholds are one pair of values for the whole board rather than per key.
+The resting levels are taken at power-on, so no key may be held while the board starts. `ec zero` takes them again. There is no stored calibration yet, and the thresholds are one pair of values for the whole board rather than per key.
 
 On nRF52840, leave `CONFIG_ZMK_SLEEP` off. An EC key cannot wake the chip from deep sleep, and the idle tier already brings the scan cost down to tens of microamps.
 

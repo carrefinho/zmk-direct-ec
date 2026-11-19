@@ -1,11 +1,11 @@
 /*
- * Bring-up commands for zmk,kscan-ec-direct: what a board designer runs once
+ * Bring-up commands for zmk,kscan-direct-ec: what a board designer runs once
  * to characterise a design, and what a builder runs to check an assembly.
  *
- *   ecd rest        hands off: resting level and noise of every key
- *   ecd fit         lines of held keys: the load compensation scale
- *   ecd calibrate   one press per key: every key's swing
- *   ecd export      all of it, ready to paste
+ *   ec rest        hands off: resting level and noise of every key
+ *   ec fit         lines of held keys: the load compensation scale
+ *   ec calibrate   one press per key: every key's swing
+ *   ec export      all of it, ready to paste
  *
  * Copyright (c) 2026 carrefinho
  * SPDX-License-Identifier: MIT
@@ -27,10 +27,10 @@
 #include <zmk/matrix_transform.h>
 #include <zmk/physical_layouts.h>
 
-#include <zmk_ec_direct/ec_direct.h>
+#include <zmk_direct_ec/direct_ec.h>
 
-#include "ec_direct_priv.h"
-#include "ec_direct_shell.h"
+#include "direct_ec_priv.h"
+#include "direct_ec_shell.h"
 
 /* Passes per figure in `rest`: about a second at 250 Hz. */
 #define REST_PASSES 256
@@ -190,7 +190,7 @@ static void print_keys(const struct shell *sh, enum shell_vt100_color color, boo
 
 static int pass(const struct shell *sh, const struct device *dev)
 {
-	int rc = zmk_ec_direct_read_pass(dev, snap, K_MSEC(2500));
+	int rc = zmk_direct_ec_read_pass(dev, snap, K_MSEC(2500));
 
 	if (rc) {
 		shell_error(sh, "no pass from the scan thread (%d)", rc);
@@ -238,17 +238,17 @@ static int settle(const struct shell *sh, const struct device *dev)
 static int begin(const struct shell *sh, const struct device *dev)
 {
 	if (!device_is_ready(dev)) {
-		shell_error(sh, "The driver failed to start. See `ecd status`.");
+		shell_error(sh, "The driver failed to start. See `ec status`.");
 		return -ENODEV;
 	}
-	zmk_ec_direct_get_size(dev, &res.rows, &res.cols);
+	zmk_direct_ec_get_size(dev, &res.rows, &res.cols);
 	res.keys = 0;
 	for (uint8_t c = 0; c < res.cols; c++) {
 		res.mask[c] = 0;
 		for (uint8_t r = 0; r < res.rows; r++) {
-			struct zmk_ec_direct_cell cell;
+			struct zmk_direct_ec_cell cell;
 
-			zmk_ec_direct_get_cell(dev, r, c, &cell);
+			zmk_direct_ec_get_cell(dev, r, c, &cell);
 			if (cell.scanned) {
 				res.mask[c] |= BIT(r);
 				res.keys++;
@@ -260,13 +260,13 @@ static int begin(const struct shell *sh, const struct device *dev)
 		return -ENODEV;
 	}
 	load_layout();
-	zmk_ec_direct_bench(dev, true);
+	zmk_direct_ec_bench(dev, true);
 	return 0;
 }
 
 static void end(const struct device *dev)
 {
-	zmk_ec_direct_bench(dev, false);
+	zmk_direct_ec_bench(dev, false);
 }
 
 /* Fresh released baselines into `base`, and how far a quiet key wanders. */
@@ -274,16 +274,16 @@ static int rebase(const struct shell *sh, const struct device *dev, int16_t *bas
 		  int16_t *detect)
 {
 	int16_t worst = 0;
-	int rc = zmk_ec_direct_calibrate(dev);
+	int rc = zmk_direct_ec_calibrate(dev);
 
 	if (rc) {
 		shell_error(sh, "The resting levels were not taken (%d).", rc);
 		return rc;
 	}
 	FOR_KEYS(r, c) {
-		struct zmk_ec_direct_cell cell;
+		struct zmk_direct_ec_cell cell;
 
-		zmk_ec_direct_get_cell(dev, r, c, &cell);
+		zmk_direct_ec_get_cell(dev, r, c, &cell);
 		base[CELL(r, c)] = cell.baseline;
 	}
 	for (int n = 0; n < QUIET_PASSES; n++) {
@@ -618,7 +618,7 @@ static bool print_bad(const struct shell *sh, const uint16_t *bad, const char *w
 	return any_bad;
 }
 
-int ecd_cmd_rest(const struct shell *sh, const struct device *dev)
+int ec_cmd_rest(const struct shell *sh, const struct device *dev)
 {
 	uint16_t low[EC_MAX_COLS] = {0}, high[EC_MAX_COLS] = {0}, noisy[EC_MAX_COLS] = {0};
 	uint16_t press, release;
@@ -701,9 +701,9 @@ int ecd_cmd_rest(const struct shell *sh, const struct device *dev)
 
 	FOR_KEYS(r, c) {
 		size_t i = CELL(r, c);
-		struct zmk_ec_direct_cell cell;
+		struct zmk_direct_ec_cell cell;
 
-		zmk_ec_direct_get_cell(dev, r, c, &cell);
+		zmk_direct_ec_get_cell(dev, r, c, &cell);
 		if (abs(res.rest[i] - cell.baseline) > abs(moved)) {
 			moved = res.rest[i] - cell.baseline;
 			moved_i = i;
@@ -726,10 +726,10 @@ int ecd_cmd_rest(const struct shell *sh, const struct device *dev)
 	print_bad(sh, noisy, "is much noisier than the others");
 
 	/* Re-zeroing over a stuck key would hide it, so only hint when none is. */
-	zmk_ec_direct_get_thresholds(dev, &press, &release);
+	zmk_direct_ec_get_thresholds(dev, &press, &release);
 	if (!stuck && abs(moved) > release / 2) {
 		shell_print(sh, "Resting levels have moved since they were last taken (%+d on %s). "
-				"`ecd zero` takes them again.", moved, label(moved_i));
+				"`ec zero` takes them again.", moved, label(moved_i));
 	}
 out:
 	end(dev);
@@ -754,7 +754,7 @@ static void cal_summary(const struct shell *sh, const struct device *dev, int16_
 		shell_warn(sh, "No key was pressed.");
 		return;
 	}
-	zmk_ec_direct_get_thresholds(dev, &press, &release);
+	zmk_direct_ec_get_thresholds(dev, &press, &release);
 	FOR_KEYS(r, c) {
 		int16_t s = res.swing[CELL(r, c)];
 
@@ -830,22 +830,22 @@ static void cal_summary(const struct shell *sh, const struct device *dev, int16_
 
 	/* A wrong K shows on the keys next to a held one. With K at 0 the
 	 * warning before the presses has already said so. */
-	if (zmk_ec_direct_get_load_comp(dev)) {
+	if (zmk_direct_ec_get_load_comp(dev)) {
 		if (-res.dip > press / 2) {
 			shell_warn(sh, "Unpressed keys dipped to %+d (%s) while others on their "
-				       "line were held, so K is too high. Run `ecd fit` again.",
+				       "line were held, so K is too high. Run `ec fit` again.",
 				   res.dip, label(res.dip_i));
 		}
 		if (res.rise > press / 2) {
 			shell_warn(sh, "Unpressed keys rose to %+d (%s) while others on their line "
-				       "were held, so K is too low. Run `ecd fit` again.",
+				       "were held, so K is too low. Run `ec fit` again.",
 				   res.rise, label(res.rise_i));
 		}
 	}
-	shell_print(sh, "`ecd export` prints this as devicetree.");
+	shell_print(sh, "`ec export` prints this as devicetree.");
 }
 
-int ecd_cmd_calibrate(const struct shell *sh, const struct device *dev)
+int ec_cmd_calibrate(const struct shell *sh, const struct device *dev)
 {
 	uint16_t seen[EC_MAX_COLS] = {0};
 	uint16_t count = 0;
@@ -857,9 +857,9 @@ int ecd_cmd_calibrate(const struct shell *sh, const struct device *dev)
 	if (rc) {
 		return rc;
 	}
-	if (!zmk_ec_direct_get_load_comp(dev)) {
+	if (!zmk_direct_ec_get_load_comp(dev)) {
 		shell_warn(sh, "Load compensation is off. With several keys on a sense line, run "
-			       "`ecd fit` first.");
+			       "`ec fit` first.");
 	}
 	shell_print(sh, "Hands off the keys for a moment.");
 	rc = settle(sh, dev);
@@ -1096,11 +1096,11 @@ static void fit_line(const struct shell *sh, uint8_t c, uint16_t held, uint16_t 
 	}
 }
 
-int ecd_cmd_fit(const struct shell *sh, const struct device *dev)
+int ec_cmd_fit(const struct shell *sh, const struct device *dev)
 {
 	uint16_t prev[EC_MAX_COLS] = {0}, held[EC_MAX_COLS] = {0}, s2[EC_MAX_COLS] = {0};
 	uint8_t stable[EC_MAX_COLS] = {0}, most[EC_MAX_COLS] = {0};
-	uint16_t k_old = zmk_ec_direct_get_load_comp(dev);
+	uint16_t k_old = zmk_direct_ec_get_load_comp(dev);
 	uint16_t n = 0, rolled = 0;
 	int16_t detect, k_new;
 	int64_t t0, last_ms;
@@ -1111,7 +1111,7 @@ int ecd_cmd_fit(const struct shell *sh, const struct device *dev)
 		return rc;
 	}
 	/* The fit works on readings nothing has corrected yet. */
-	zmk_ec_direct_set_load_comp(dev, 0);
+	zmk_direct_ec_set_load_comp(dev, 0);
 	shell_print(sh, "Hands off the keys for a moment.");
 	rc = settle(sh, dev);
 	if (!rc) {
@@ -1225,29 +1225,29 @@ int ecd_cmd_fit(const struct shell *sh, const struct device *dev)
 	if (n < 5) {
 		shell_warn(sh, "Only %u estimates. Another line gives a steadier K.", n);
 	}
-	shell_print(sh, "load-comp-scale = <%d>;  applied until reset. Run `ecd calibrate` next.",
+	shell_print(sh, "load-comp-scale = <%d>;  applied until reset. Run `ec calibrate` next.",
 		    k_new);
 out:
-	zmk_ec_direct_set_load_comp(dev, k_old);
+	zmk_direct_ec_set_load_comp(dev, k_old);
 	end(dev);
 	return rc;
 }
 
 /* --- export ---------------------------------------------------------- */
 
-int ecd_cmd_export(const struct shell *sh, const struct device *dev)
+int ec_cmd_export(const struct shell *sh, const struct device *dev)
 {
-	struct zmk_ec_direct_tripwire tw;
+	struct zmk_direct_ec_tripwire tw;
 	uint16_t press, release, seen = 0;
 	int16_t med;
 
 	if (!res.have_rest && !res.have_cal) {
-		shell_print(sh, "Nothing measured yet. Run `ecd rest`, `ecd fit` and "
-				"`ecd calibrate` first.");
+		shell_print(sh, "Nothing measured yet. Run `ec rest`, `ec fit` and "
+				"`ec calibrate` first.");
 		return 0;
 	}
-	zmk_ec_direct_get_thresholds(dev, &press, &release);
-	zmk_ec_direct_get_tripwire(dev, &tw);
+	zmk_direct_ec_get_thresholds(dev, &press, &release);
+	zmk_direct_ec_get_tripwire(dev, &tw);
 	/* `label` needs the layout; begin() is not called here. */
 	load_layout();
 
@@ -1255,7 +1255,7 @@ int ecd_cmd_export(const struct shell *sh, const struct device *dev)
 		    CONFIG_BOARD, res.rows, res.cols, res.keys, NAVG);
 	shell_print(sh, "press-threshold = <%u>;", press);
 	shell_print(sh, "release-threshold = <%u>;", release);
-	shell_print(sh, "load-comp-scale = <%u>;%s", zmk_ec_direct_get_load_comp(dev),
+	shell_print(sh, "load-comp-scale = <%u>;%s", zmk_direct_ec_get_load_comp(dev),
 		    res.fit_n ? "" : "  /* not fitted in this session */");
 	shell_print(sh, "");
 	shell_print(sh, "/* Per-key table, one row per strobe, one column per sense line.");
@@ -1303,13 +1303,13 @@ int ecd_cmd_export(const struct shell *sh, const struct device *dev)
 		}
 	}
 	if (tw.enabled) {
-#if defined(CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE_THRESHOLD)
+#if defined(CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE_THRESHOLD)
 		shell_fprintf(sh, SHELL_NORMAL, "Tripwire: trips over %u idle",
-			      CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE_THRESHOLD);
+			      CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE_THRESHOLD);
 #endif
-#if defined(CONFIG_ZMK_KSCAN_EC_DIRECT_TW_WARM_THRESHOLD)
+#if defined(CONFIG_ZMK_KSCAN_DIRECT_EC_TW_WARM_THRESHOLD)
 		shell_fprintf(sh, SHELL_NORMAL, ", %u just after a key",
-			      CONFIG_ZMK_KSCAN_EC_DIRECT_TW_WARM_THRESHOLD);
+			      CONFIG_ZMK_KSCAN_DIRECT_EC_TW_WARM_THRESHOLD);
 #endif
 		shell_print(sh, ". Quiet maximum %+d, %u false trips.", tw.max_pos,
 			    tw.false_trips);

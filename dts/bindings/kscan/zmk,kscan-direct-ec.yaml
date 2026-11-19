@@ -15,7 +15,7 @@ description: |
 
   nRF52840: the per-key pass converts every sense line at once in SAADC scan
   mode, and an idle board can drop to a low-power tripwire pass. See
-  CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE.
+  CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE.
 
   SAMD21 and RP2040: the pass takes one cell at a time. The sense line is
   pulled through the pad's own weak pull (prime), released, converted
@@ -26,7 +26,7 @@ description: |
   Zephyr's ADC driver must be disabled on the board (`&adc { status =
   "disabled"; };`). This driver owns the converter.
 
-compatible: "zmk,kscan-ec-direct"
+compatible: "zmk,kscan-direct-ec"
 
 include: base.yaml
 
@@ -59,7 +59,7 @@ properties:
     default: 200
     description: |
       Counts above the released baseline to call a key pressed. Set it from
-      the board: `ecd status` shows what each key reads released and pressed.
+      the board: `ec status` shows what each key reads released and pressed.
       Somewhere around 40 % of the weakest key's pressed reading is a good
       start, as long as that clears idle noise and what a pressed neighbour
       adds several times over.
@@ -91,7 +91,7 @@ properties:
       else is held. K is this property, in counts: what a key would read if
       it were the line's entire capacitance. Fit it on the board: hold all
       but one key of a line and choose the K that brings the released key
-      back to zero (`ecd comp <K>` changes it live). Thresholds then apply to
+      back to zero (`ec comp <K>` changes it live). Thresholds then apply to
       the compensated readings.
 
   bias-us:

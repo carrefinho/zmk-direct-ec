@@ -1,5 +1,5 @@
 /*
- * Generic per-column pair pass for zmk,kscan-ec-direct.
+ * Generic per-column pair pass for zmk,kscan-direct-ec.
  *
  * Copyright (c) 2026 carrefinho
  * SPDX-License-Identifier: MIT
@@ -10,16 +10,16 @@
 
 #include "backend_pair.h"
 
-LOG_MODULE_DECLARE(kscan_ec_direct, CONFIG_INPUT_LOG_LEVEL);
+LOG_MODULE_DECLARE(kscan_direct_ec, CONFIG_INPUT_LOG_LEVEL);
 
 static uint32_t convert_timeouts;
 
-static int pair_init(const struct ec_direct_config *cfg, uint8_t *stage)
+static int pair_init(const struct direct_ec_config *cfg, uint8_t *stage)
 {
 	return ec_pair_ops.init(cfg, stage);
 }
 
-static void pair_thread_start(const struct ec_direct_config *cfg)
+static void pair_thread_start(const struct direct_ec_config *cfg)
 {
 	ARG_UNUSED(cfg);
 }
@@ -33,7 +33,7 @@ static void pair_thread_start(const struct ec_direct_config *cfg)
  * interrupt landing between ref and test would widen the window the
  * floating node integrates noise over, which is the dominant idle term.
  */
-static void pair_sample_pass(const struct ec_direct_config *cfg, int16_t *diff)
+static void pair_sample_pass(const struct direct_ec_config *cfg, int16_t *diff)
 {
 	bool timed_out = false;
 

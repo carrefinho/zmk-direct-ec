@@ -33,7 +33,7 @@
  *    block below.
  */
 
-#define DT_DRV_COMPAT zmk_kscan_ec_direct
+#define DT_DRV_COMPAT zmk_kscan_direct_ec
 
 #include <stdlib.h>
 #include <string.h>
@@ -45,11 +45,11 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
-#include <zmk_ec_direct/ec_direct.h>
+#include <zmk_direct_ec/direct_ec.h>
 
-#include "ec_direct_priv.h"
+#include "direct_ec_priv.h"
 
-LOG_MODULE_REGISTER(kscan_ec_direct, CONFIG_INPUT_LOG_LEVEL);
+LOG_MODULE_REGISTER(kscan_direct_ec, CONFIG_INPUT_LOG_LEVEL);
 
 /* --- acquisition ----------------------------------------------------- */
 
@@ -77,7 +77,7 @@ static inline void sort_navg(int16_t *v)
 /* One cell's NAVG samples to one reading. */
 static inline int32_t reduce_navg(int16_t *v)
 {
-	if (IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_MEAN)) {
+	if (IS_ENABLED(CONFIG_ZMK_KSCAN_DIRECT_EC_MEAN)) {
 		int32_t s = 0;
 
 		for (uint8_t k = 0; k < NAVG; k++) {
@@ -86,7 +86,7 @@ static inline int32_t reduce_navg(int16_t *v)
 		return s / NAVG;
 	}
 	sort_navg(v);
-	if (IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_TRIMMED_MEAN) && NAVG >= 4) {
+	if (IS_ENABLED(CONFIG_ZMK_KSCAN_DIRECT_EC_TRIMMED_MEAN) && NAVG >= 4) {
 		int32_t s = 0;
 
 		for (uint8_t k = 1; k < NAVG - 1; k++) {
@@ -97,7 +97,7 @@ static inline int32_t reduce_navg(int16_t *v)
 	return v[NAVG / 2];
 }
 
-static void read_pass(const struct ec_direct_config *cfg, int32_t *out)
+static void read_pass(const struct direct_ec_config *cfg, int32_t *out)
 {
 	static int16_t diff[EC_MAX_CELLS];
 	size_t n_cells = (size_t)cfg->rows * cfg->cols;
@@ -152,7 +152,7 @@ static void read_pass(const struct ec_direct_config *cfg, int32_t *out)
  * K is fitted, not derived: hold all but one key of a line and pick the K
  * that returns the released one to its baseline.
  */
-static void load_comp(const struct ec_direct_config *cfg, struct ec_direct_data *data)
+static void load_comp(const struct direct_ec_config *cfg, struct direct_ec_data *data)
 {
 	int32_t k = data->load_comp_scale;
 
@@ -207,7 +207,7 @@ static void period_sleep(uint32_t period_ms)
 
 /* --- tripwire tier --------------------------------------------------- */
 
-#if IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE)
+#if IS_ENABLED(CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE)
 
 /*
  * The idle cost is the battery life, so an idle board does not scan keys. The
@@ -229,11 +229,11 @@ static void period_sleep(uint32_t period_ms)
  * One baseline serves all three.
  */
 
-#define TW_THRESHOLD     CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE_THRESHOLD
-#define TW_IDLE_PERIOD   CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE_PERIOD_MS
-#define TW_CAL_PASSES    CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE_CAL_PASSES
-#define TW_TRACK_SHIFT   CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE_TRACK_SHIFT
-#define TW_SETTLE_PASSES CONFIG_ZMK_KSCAN_EC_DIRECT_TW_HOLD_SETTLE_PASSES
+#define TW_THRESHOLD     CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE_THRESHOLD
+#define TW_IDLE_PERIOD   CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE_PERIOD_MS
+#define TW_CAL_PASSES    CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE_CAL_PASSES
+#define TW_TRACK_SHIFT   CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE_TRACK_SHIFT
+#define TW_SETTLE_PASSES CONFIG_ZMK_KSCAN_DIRECT_EC_TW_HOLD_SETTLE_PASSES
 
 static int16_t tw_cal[EC_MAX_COLS][TW_CAL_PASSES];
 
@@ -249,7 +249,7 @@ static int cmp_i16(const void *a, const void *b)
  * own rate, because a floating line remembers the interval since the pass
  * before and reads differently back to back.
  */
-static void tripwire_calibrate(const struct ec_direct_config *cfg, struct ec_direct_data *data)
+static void tripwire_calibrate(const struct direct_ec_config *cfg, struct direct_ec_data *data)
 {
 	int32_t one[EC_MAX_COLS];
 
@@ -271,7 +271,7 @@ static void tripwire_calibrate(const struct ec_direct_config *cfg, struct ec_dir
 	}
 }
 
-static void tw_marks_reset(struct ec_direct_data *data)
+static void tw_marks_reset(struct direct_ec_data *data)
 {
 	data->tw_max_pos = 0;
 	data->tw_max_pos_col = 0;
@@ -281,26 +281,26 @@ static void tw_marks_reset(struct ec_direct_data *data)
 
 /* Pick the tripwire rate. Called before every tripwire pass; a change takes
  * effect at that pass's sleep. */
-static void tw_schedule(struct ec_direct_data *data)
+static void tw_schedule(struct direct_ec_data *data)
 {
 	int64_t since = k_uptime_get() - data->last_key_ms;
-	uint8_t rate = since < CONFIG_ZMK_KSCAN_EC_DIRECT_TW_WARM_HOLD_MS
-			       ? ZMK_EC_DIRECT_RATE_WARM
-			       : since < CONFIG_ZMK_KSCAN_EC_DIRECT_TW_DORMANT_AFTER_MS
-					 ? ZMK_EC_DIRECT_RATE_IDLE
-					 : ZMK_EC_DIRECT_RATE_DORMANT;
+	uint8_t rate = since < CONFIG_ZMK_KSCAN_DIRECT_EC_TW_WARM_HOLD_MS
+			       ? ZMK_DIRECT_EC_RATE_WARM
+			       : since < CONFIG_ZMK_KSCAN_DIRECT_EC_TW_DORMANT_AFTER_MS
+					 ? ZMK_DIRECT_EC_RATE_IDLE
+					 : ZMK_DIRECT_EC_RATE_DORMANT;
 
 	if (rate == data->tw_rate) {
 		return;
 	}
 	data->tw_rate = rate;
 	switch (rate) {
-	case ZMK_EC_DIRECT_RATE_WARM:
-		data->tw_period_ms = CONFIG_ZMK_KSCAN_EC_DIRECT_TW_WARM_PERIOD_MS;
-		data->tw_gate_threshold = CONFIG_ZMK_KSCAN_EC_DIRECT_TW_WARM_THRESHOLD;
+	case ZMK_DIRECT_EC_RATE_WARM:
+		data->tw_period_ms = CONFIG_ZMK_KSCAN_DIRECT_EC_TW_WARM_PERIOD_MS;
+		data->tw_gate_threshold = CONFIG_ZMK_KSCAN_DIRECT_EC_TW_WARM_THRESHOLD;
 		break;
-	case ZMK_EC_DIRECT_RATE_DORMANT:
-		data->tw_period_ms = CONFIG_ZMK_KSCAN_EC_DIRECT_TW_DORMANT_PERIOD_MS;
+	case ZMK_DIRECT_EC_RATE_DORMANT:
+		data->tw_period_ms = CONFIG_ZMK_KSCAN_DIRECT_EC_TW_DORMANT_PERIOD_MS;
 		data->tw_gate_threshold = 0;
 		break;
 	default:
@@ -313,29 +313,29 @@ static void tw_schedule(struct ec_direct_data *data)
 
 /* The per-key hold after the last key: short while warm, since the gate
  * catches the next press at the same rate, the full hold otherwise. */
-static int64_t active_hold_ms(struct ec_direct_data *data)
+static int64_t active_hold_ms(struct direct_ec_data *data)
 {
-	if (k_uptime_get() - data->last_key_ms < CONFIG_ZMK_KSCAN_EC_DIRECT_TW_WARM_HOLD_MS) {
-		return CONFIG_ZMK_KSCAN_EC_DIRECT_TW_WARM_ACTIVE_HOLD_MS;
+	if (k_uptime_get() - data->last_key_ms < CONFIG_ZMK_KSCAN_DIRECT_EC_TW_WARM_HOLD_MS) {
+		return CONFIG_ZMK_KSCAN_DIRECT_EC_TW_WARM_ACTIVE_HOLD_MS;
 	}
-	return CONFIG_ZMK_KSCAN_EC_DIRECT_ACTIVE_HOLD_MS;
+	return CONFIG_ZMK_KSCAN_DIRECT_EC_ACTIVE_HOLD_MS;
 }
 
-static void tier_set(struct ec_direct_data *data, enum zmk_ec_direct_tier tier)
+static void tier_set(struct direct_ec_data *data, enum zmk_direct_ec_tier tier)
 {
 	if (data->tier == tier) {
 		return;
 	}
 	data->tier = tier;
 	period_reset(); /* the two tiers have different periods */
-	LOG_DBG("tier -> %s", tier == ZMK_EC_DIRECT_TIER_TRIPWIRE ? "tripwire" : "active");
+	LOG_DBG("tier -> %s", tier == ZMK_DIRECT_EC_TIER_TRIPWIRE ? "tripwire" : "active");
 }
 
 /*
  * One tripwire slot. Returns true if a line tripped and the tier is now
  * ACTIVE; the caller then runs the per-key pass with no sleep in between.
  */
-static bool tripwire_tick(const struct ec_direct_config *cfg, struct ec_direct_data *data)
+static bool tripwire_tick(const struct direct_ec_config *cfg, struct direct_ec_data *data)
 {
 	bool trip = false;
 	int32_t pass_pos = 0, pass_neg = 0;
@@ -363,7 +363,7 @@ static bool tripwire_tick(const struct ec_direct_config *cfg, struct ec_direct_d
 			data->stint_from_trip = true;
 			data->stint_press = false;
 			LOG_DBG("trip on line %u, %+d", c, d);
-			tier_set(data, ZMK_EC_DIRECT_TIER_ACTIVE);
+			tier_set(data, ZMK_DIRECT_EC_TIER_ACTIVE);
 		} else if (!trip && TW_TRACK_SHIFT > 0) {
 			/*
 			 * Slow follow of the baseline. It is calibrated once, and
@@ -395,12 +395,12 @@ static bool tripwire_tick(const struct ec_direct_config *cfg, struct ec_direct_d
 	return false;
 }
 
-#if IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_TW_HOLD_WATCH)
+#if IS_ENABLED(CONFIG_ZMK_KSCAN_DIRECT_EC_TW_HOLD_WATCH)
 /*
  * One slot of the hold watch. Returns true if the slot is done, false if the
  * per-key pass has to run now (an edge, or the backstop).
  */
-static bool hold_watch_tick(const struct ec_direct_config *cfg, struct ec_direct_data *data)
+static bool hold_watch_tick(const struct direct_ec_config *cfg, struct direct_ec_data *data)
 {
 	bool edge = false;
 
@@ -415,15 +415,15 @@ static bool hold_watch_tick(const struct ec_direct_config *cfg, struct ec_direct
 		 * it crosses -RELEASE_EDGE instead of being tracked away and
 		 * left to the backstop.
 		 */
-		if (d > CONFIG_ZMK_KSCAN_EC_DIRECT_TW_HOLD_EDGE ||
-		    d < -CONFIG_ZMK_KSCAN_EC_DIRECT_TW_HOLD_RELEASE_EDGE) {
+		if (d > CONFIG_ZMK_KSCAN_DIRECT_EC_TW_HOLD_EDGE ||
+		    d < -CONFIG_ZMK_KSCAN_DIRECT_EC_TW_HOLD_RELEASE_EDGE) {
 			edge = true;
 		} else if (d > 0) {
-			data->hold_base[c] += d / (1 << CONFIG_ZMK_KSCAN_EC_DIRECT_TW_HOLD_TRACK_SHIFT);
+			data->hold_base[c] += d / (1 << CONFIG_ZMK_KSCAN_DIRECT_EC_TW_HOLD_TRACK_SHIFT);
 		}
 	}
 	if (!edge && k_uptime_get() - data->hold_last_full_ms <
-			     CONFIG_ZMK_KSCAN_EC_DIRECT_TW_HOLD_BACKSTOP_MS) {
+			     CONFIG_ZMK_KSCAN_DIRECT_EC_TW_HOLD_BACKSTOP_MS) {
 		period_sleep(cfg->poll_interval_ms);
 		return true;
 	}
@@ -442,7 +442,7 @@ static bool hold_watch_tick(const struct ec_direct_config *cfg, struct ec_direct
 
 /* After a per-key pass with a key down: start the watch once the pressed set
  * has been steady for long enough. */
-static void hold_watch_arm(const struct ec_direct_config *cfg, struct ec_direct_data *data)
+static void hold_watch_arm(const struct direct_ec_config *cfg, struct direct_ec_data *data)
 {
 	bool pending = data->hold_changed;
 
@@ -473,7 +473,7 @@ static void hold_watch_arm(const struct ec_direct_config *cfg, struct ec_direct_
  * board has been quiet for the hold. Returns true if the tier changed, in
  * which case the caller skips its sleep.
  */
-static bool tripwire_after_pass(const struct ec_direct_config *cfg, struct ec_direct_data *data)
+static bool tripwire_after_pass(const struct direct_ec_config *cfg, struct direct_ec_data *data)
 {
 	bool any = false;
 
@@ -484,7 +484,7 @@ static bool tripwire_after_pass(const struct ec_direct_config *cfg, struct ec_di
 		data->last_active_ms = k_uptime_get();
 		data->last_key_ms = data->last_active_ms;
 		data->stint_press = true;
-#if IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_TW_HOLD_WATCH)
+#if IS_ENABLED(CONFIG_ZMK_KSCAN_DIRECT_EC_TW_HOLD_WATCH)
 		hold_watch_arm(cfg, data);
 #endif
 		return false;
@@ -500,7 +500,7 @@ static bool tripwire_after_pass(const struct ec_direct_config *cfg, struct ec_di
 	 * the threshold is right.
 	 */
 	if (data->stint_from_trip && !data->stint_press) {
-		if (data->tw_rate == ZMK_EC_DIRECT_RATE_WARM) {
+		if (data->tw_rate == ZMK_DIRECT_EC_RATE_WARM) {
 			data->gate_misses++;
 		} else {
 			data->false_trips++;
@@ -508,15 +508,15 @@ static bool tripwire_after_pass(const struct ec_direct_config *cfg, struct ec_di
 	}
 	data->stint_from_trip = false;
 	tw_marks_reset(data);
-	tier_set(data, ZMK_EC_DIRECT_TIER_TRIPWIRE);
+	tier_set(data, ZMK_DIRECT_EC_TIER_TRIPWIRE);
 	return true;
 }
 
-#endif /* CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE */
+#endif /* CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE */
 
 /* --- scan ------------------------------------------------------------ */
 
-#define BENCH(data) (IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_BRINGUP) && (data)->bench)
+#define BENCH(data) (IS_ENABLED(CONFIG_ZMK_KSCAN_DIRECT_EC_BRINGUP) && (data)->bench)
 
 static void report_cell(const struct device *dev, uint8_t r, uint8_t c, bool pressed)
 {
@@ -528,8 +528,8 @@ static void report_cell(const struct device *dev, uint8_t r, uint8_t c, bool pre
 /* Compare every cell against its thresholds and report the changes. */
 static void report_keys(const struct device *dev)
 {
-	const struct ec_direct_config *cfg = dev->config;
-	struct ec_direct_data *data = dev->data;
+	const struct direct_ec_config *cfg = dev->config;
+	struct direct_ec_data *data = dev->data;
 	bool mute = BENCH(data);
 
 	if (mute != data->bench_applied) {
@@ -563,7 +563,7 @@ static void report_keys(const struct device *dev)
 				data->confirm[i] = 0;
 				continue;
 			}
-			if (++data->confirm[i] < CONFIG_ZMK_KSCAN_EC_DIRECT_CONFIRM_PASSES) {
+			if (++data->confirm[i] < CONFIG_ZMK_KSCAN_DIRECT_EC_CONFIRM_PASSES) {
 				/* Seen the flip, not yet for long enough. */
 				continue;
 			}
@@ -577,11 +577,11 @@ static void report_keys(const struct device *dev)
 	}
 }
 
-static void ec_direct_thread(void *p1, void *p2, void *p3)
+static void direct_ec_thread(void *p1, void *p2, void *p3)
 {
 	const struct device *dev = p1;
-	const struct ec_direct_config *cfg = dev->config;
-	struct ec_direct_data *data = dev->data;
+	const struct direct_ec_config *cfg = dev->config;
+	struct direct_ec_data *data = dev->data;
 
 	ARG_UNUSED(p2);
 	ARG_UNUSED(p3);
@@ -594,20 +594,20 @@ static void ec_direct_thread(void *p1, void *p2, void *p3)
 		read_pass(cfg, data->value);
 	}
 	data->recalibrate = true;
-#if IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE)
+#if IS_ENABLED(CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE)
 	/* Boot into ACTIVE and let the quiet timer drop it. */
-	data->tier = ZMK_EC_DIRECT_TIER_ACTIVE;
+	data->tier = ZMK_DIRECT_EC_TIER_ACTIVE;
 	data->last_active_ms = k_uptime_get();
 	data->last_key_ms = data->last_active_ms;
 	data->tw_period_ms = TW_IDLE_PERIOD;
-	data->tw_rate = ZMK_EC_DIRECT_RATE_IDLE;
+	data->tw_rate = ZMK_DIRECT_EC_RATE_IDLE;
 #endif
 	period_reset();
 
 	while (1) {
 		if (data->recalibrate) {
 			read_pass(cfg, data->baseline);
-#if IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE)
+#if IS_ENABLED(CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE)
 			tripwire_calibrate(cfg, data);
 			tw_marks_reset(data);
 #endif
@@ -621,18 +621,18 @@ static void ec_direct_thread(void *p1, void *p2, void *p3)
 			data->force_pass = false;
 		}
 
-#if IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE)
+#if IS_ENABLED(CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE)
 		if (BENCH(data)) {
 			/* Per-key pass every slot: no tripwire, no hold watch. */
-			tier_set(data, ZMK_EC_DIRECT_TIER_ACTIVE);
+			tier_set(data, ZMK_DIRECT_EC_TIER_ACTIVE);
 			data->last_active_ms = k_uptime_get();
 			data->hold_watch = false;
 		}
-		if (data->tier == ZMK_EC_DIRECT_TIER_TRIPWIRE && !tripwire_tick(cfg, data)) {
+		if (data->tier == ZMK_DIRECT_EC_TIER_TRIPWIRE && !tripwire_tick(cfg, data)) {
 			continue;
 		}
 #endif
-#if IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_TW_HOLD_WATCH)
+#if IS_ENABLED(CONFIG_ZMK_KSCAN_DIRECT_EC_TW_HOLD_WATCH)
 		if (data->hold_watch && hold_watch_tick(cfg, data)) {
 			continue;
 		}
@@ -648,7 +648,7 @@ static void ec_direct_thread(void *p1, void *p2, void *p3)
 			k_sem_give(&data->snap_done);
 		}
 
-#if IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE)
+#if IS_ENABLED(CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE)
 		if (tripwire_after_pass(cfg, data)) {
 			continue;
 		}
@@ -667,18 +667,18 @@ static int wait_flag_clear(const bool *flag, int ms)
 	return *flag ? -ETIMEDOUT : 0;
 }
 
-int zmk_ec_direct_calibrate(const struct device *dev)
+int zmk_direct_ec_calibrate(const struct device *dev)
 {
-	struct ec_direct_data *data = dev->data;
+	struct direct_ec_data *data = dev->data;
 
 	data->recalibrate = true;
 	/* Tripwire calibration takes CAL_PASSES at the tripwire's rate. */
 	return wait_flag_clear(&data->recalibrate, 5000);
 }
 
-int zmk_ec_direct_force_pass(const struct device *dev)
+int zmk_direct_ec_force_pass(const struct device *dev)
 {
-	struct ec_direct_data *data = dev->data;
+	struct direct_ec_data *data = dev->data;
 
 	data->force_pass = true;
 	/* The thread picks it up at its next slot; the dormant tripwire has the
@@ -686,11 +686,11 @@ int zmk_ec_direct_force_pass(const struct device *dev)
 	return wait_flag_clear(&data->force_pass, 2000);
 }
 
-int zmk_ec_direct_get_cell(const struct device *dev, uint8_t row, uint8_t col,
-			   struct zmk_ec_direct_cell *out)
+int zmk_direct_ec_get_cell(const struct device *dev, uint8_t row, uint8_t col,
+			   struct zmk_direct_ec_cell *out)
 {
-	const struct ec_direct_config *cfg = dev->config;
-	struct ec_direct_data *data = dev->data;
+	const struct direct_ec_config *cfg = dev->config;
+	struct direct_ec_data *data = dev->data;
 	size_t i = row * cfg->cols + col;
 
 	if (row >= cfg->rows || col >= cfg->cols) {
@@ -703,16 +703,16 @@ int zmk_ec_direct_get_cell(const struct device *dev, uint8_t row, uint8_t col,
 	return 0;
 }
 
-void zmk_ec_direct_bench(const struct device *dev, bool on)
+void zmk_direct_ec_bench(const struct device *dev, bool on)
 {
-	struct ec_direct_data *data = dev->data;
+	struct direct_ec_data *data = dev->data;
 
 	data->bench = on;
 }
 
-int zmk_ec_direct_read_pass(const struct device *dev, int16_t *out, k_timeout_t timeout)
+int zmk_direct_ec_read_pass(const struct device *dev, int16_t *out, k_timeout_t timeout)
 {
-	struct ec_direct_data *data = dev->data;
+	struct direct_ec_data *data = dev->data;
 	int rc;
 
 	k_sem_reset(&data->snap_done);
@@ -723,62 +723,62 @@ int zmk_ec_direct_read_pass(const struct device *dev, int16_t *out, k_timeout_t 
 	return rc;
 }
 
-void zmk_ec_direct_get_size(const struct device *dev, uint8_t *rows, uint8_t *cols)
+void zmk_direct_ec_get_size(const struct device *dev, uint8_t *rows, uint8_t *cols)
 {
-	const struct ec_direct_config *cfg = dev->config;
+	const struct direct_ec_config *cfg = dev->config;
 
 	*rows = cfg->rows;
 	*cols = cfg->cols;
 }
 
-void zmk_ec_direct_set_load_comp(const struct device *dev, uint16_t scale)
+void zmk_direct_ec_set_load_comp(const struct device *dev, uint16_t scale)
 {
-	struct ec_direct_data *data = dev->data;
+	struct direct_ec_data *data = dev->data;
 
 	data->load_comp_scale = scale;
 }
 
-uint16_t zmk_ec_direct_get_load_comp(const struct device *dev)
+uint16_t zmk_direct_ec_get_load_comp(const struct device *dev)
 {
-	const struct ec_direct_data *data = dev->data;
+	const struct direct_ec_data *data = dev->data;
 
 	return data->load_comp_scale;
 }
 
-void zmk_ec_direct_set_thresholds(const struct device *dev, uint16_t press, uint16_t release)
+void zmk_direct_ec_set_thresholds(const struct device *dev, uint16_t press, uint16_t release)
 {
-	struct ec_direct_data *data = dev->data;
+	struct direct_ec_data *data = dev->data;
 
 	data->press_threshold = press;
 	data->release_threshold = release;
 }
 
-void zmk_ec_direct_get_thresholds(const struct device *dev, uint16_t *press, uint16_t *release)
+void zmk_direct_ec_get_thresholds(const struct device *dev, uint16_t *press, uint16_t *release)
 {
-	struct ec_direct_data *data = dev->data;
+	struct direct_ec_data *data = dev->data;
 
 	*press = data->press_threshold;
 	*release = data->release_threshold;
 }
 
-void zmk_ec_direct_get_init_status(const struct device *dev, uint8_t *stage, int *rc)
+void zmk_direct_ec_get_init_status(const struct device *dev, uint8_t *stage, int *rc)
 {
-	struct ec_direct_data *data = dev->data;
+	struct direct_ec_data *data = dev->data;
 
 	*stage = data->init_stage;
 	*rc = data->init_rc;
 }
 
-void zmk_ec_direct_get_tripwire(const struct device *dev, struct zmk_ec_direct_tripwire *out)
+void zmk_direct_ec_get_tripwire(const struct device *dev, struct zmk_direct_ec_tripwire *out)
 {
-	const struct ec_direct_config *cfg = dev->config;
-	struct ec_direct_data *data = dev->data;
+	const struct direct_ec_config *cfg = dev->config;
+	struct direct_ec_data *data = dev->data;
 
-	out->enabled = IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE);
+	out->enabled = IS_ENABLED(CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE);
 	out->tier = data->tier;
 	out->rate = data->tw_rate;
 	out->period_ms = data->tw_period_ms;
-#if IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE)
+#if IS_ENABLED(CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE)
 	out->threshold = data->tw_gate_threshold ? data->tw_gate_threshold : TW_THRESHOLD;
 #else
 	out->threshold = 0;
@@ -797,15 +797,15 @@ void zmk_ec_direct_get_tripwire(const struct device *dev, struct zmk_ec_direct_t
 	out->value = data->tw_value;
 }
 
-static int ec_direct_init(const struct device *dev)
+static int direct_ec_init(const struct device *dev)
 {
-	const struct ec_direct_config *cfg = dev->config;
-	struct ec_direct_data *data = dev->data;
+	const struct direct_ec_config *cfg = dev->config;
+	struct direct_ec_data *data = dev->data;
 	int rc;
 
 	data->dev = dev;
 	k_sem_init(&data->snap_done, 0, 1);
-	data->init_stage = ZMK_EC_DIRECT_INIT_STROBES;
+	data->init_stage = ZMK_DIRECT_EC_INIT_STROBES;
 
 	for (uint8_t r = 0; r < cfg->rows; r++) {
 		if (!gpio_is_ready_dt(&cfg->strobes[r])) {
@@ -828,12 +828,12 @@ static int ec_direct_init(const struct device *dev)
 		return rc;
 	}
 
-	data->init_stage = ZMK_EC_DIRECT_INIT_THREAD;
+	data->init_stage = ZMK_DIRECT_EC_INIT_THREAD;
 	k_thread_create(&data->thread, data->stack, K_KERNEL_STACK_SIZEOF(data->stack),
-			ec_direct_thread, (void *)dev, NULL, NULL,
-			CONFIG_ZMK_KSCAN_EC_DIRECT_THREAD_PRIORITY, 0, K_NO_WAIT);
-	k_thread_name_set(&data->thread, "ec_direct");
-	data->init_stage = ZMK_EC_DIRECT_INIT_READY;
+			direct_ec_thread, (void *)dev, NULL, NULL,
+			CONFIG_ZMK_KSCAN_DIRECT_EC_THREAD_PRIORITY, 0, K_NO_WAIT);
+	k_thread_name_set(&data->thread, "direct_ec");
+	data->init_stage = ZMK_DIRECT_EC_INIT_READY;
 	data->init_rc = 0;
 
 	return 0;
@@ -895,7 +895,7 @@ static int ec_direct_init(const struct device *dev)
 
 #define EC_CELLS(n) (DT_INST_PROP_LEN(n, strobe_gpios) * DT_INST_PROP_LEN(n, ain_channels))
 
-#define EC_DIRECT_INST(n)                                                                          \
+#define DIRECT_EC_INST(n)                                                                          \
 	static const struct gpio_dt_spec ec_strobes_##n[] = {                                      \
 		LISTIFY(DT_INST_PROP_LEN(n, strobe_gpios), STROBE_SPEC, (), n)};                    \
 	static const uint8_t ec_ain_##n[] = {                                                      \
@@ -914,7 +914,7 @@ static int ec_direct_init(const struct device *dev)
 	static int32_t ec_val_##n[EC_CELLS(n)];                                                    \
 	static bool ec_pressed_##n[EC_CELLS(n)];                                                   \
 	static uint8_t ec_confirm_##n[EC_CELLS(n)];                                                \
-	static struct ec_direct_data ec_data_##n = {                                               \
+	static struct direct_ec_data ec_data_##n = {                                               \
 		.baseline = ec_base_##n,                                                           \
 		.value = ec_val_##n,                                                               \
 		.pressed = ec_pressed_##n,                                                         \
@@ -923,7 +923,7 @@ static int ec_direct_init(const struct device *dev)
 		.release_threshold = DT_INST_PROP(n, release_threshold),                           \
 		.load_comp_scale = DT_INST_PROP(n, load_comp_scale),                               \
 	};                                                                                         \
-	static const struct ec_direct_config ec_cfg_##n = {                                        \
+	static const struct direct_ec_config ec_cfg_##n = {                                        \
 		.strobes = ec_strobes_##n,                                                         \
 		.hw = &ec_hw_##n,                                                                  \
 		.col_ain = ec_ain_##n,                                                             \
@@ -936,10 +936,10 @@ static int ec_direct_init(const struct device *dev)
 		.bias_pull_up = DT_INST_PROP(n, bias_pull_up),                                     \
 		.col_strobe_mask = EC_MASK_PTR(n),                                                 \
 	};                                                                                         \
-	DEVICE_DT_INST_DEFINE(n, ec_direct_init, NULL, &ec_data_##n, &ec_cfg_##n, POST_KERNEL,     \
+	DEVICE_DT_INST_DEFINE(n, direct_ec_init, NULL, &ec_data_##n, &ec_cfg_##n, POST_KERNEL,     \
 			      CONFIG_INPUT_INIT_PRIORITY, NULL);
 
 /* The sample buffers and the scan deadline are shared, so one instance. */
-BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1, "one zmk,kscan-ec-direct node");
+BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1, "one zmk,kscan-direct-ec node");
 
-DT_INST_FOREACH_STATUS_OKAY(EC_DIRECT_INST)
+DT_INST_FOREACH_STATUS_OKAY(DIRECT_EC_INST)

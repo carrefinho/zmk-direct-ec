@@ -1,5 +1,5 @@
 /*
- * Generic per-column pair pass for zmk,kscan-ec-direct.
+ * Generic per-column pair pass for zmk,kscan-direct-ec.
  *
  * Copyright (c) 2026 carrefinho
  * SPDX-License-Identifier: MIT
@@ -32,7 +32,7 @@
 
 #include <zephyr/devicetree.h>
 
-#include "ec_direct_priv.h"
+#include "direct_ec_priv.h"
 
 /*
  * Column pin as (port register base, pin index), derived from col-gpios.
@@ -73,17 +73,17 @@ struct ec_backend_cfg {
 struct ec_pair_ops {
 	/* Claim the converter, validate cfg->col_ain against the pins, put every
 	 * column pin in its sensing state. Advances *stage through the
-	 * ZMK_EC_DIRECT_INIT_* values. */
-	int (*init)(const struct ec_direct_config *cfg, uint8_t *stage);
+	 * ZMK_DIRECT_EC_INIT_* values. */
+	int (*init)(const struct direct_ec_config *cfg, uint8_t *stage);
 	/* Engage / release the column's weak pull (down, or up when
 	 * cfg->bias_pull_up). The pin stays connected to the converter
 	 * throughout; only the pull changes. init must reject bias_pull_up on a
 	 * part whose pull-up does not survive the analog state. */
-	void (*bias_on)(const struct ec_direct_config *cfg, uint8_t col);
-	void (*bias_off)(const struct ec_direct_config *cfg, uint8_t col);
+	void (*bias_on)(const struct direct_ec_config *cfg, uint8_t col);
+	void (*bias_off)(const struct direct_ec_config *cfg, uint8_t col);
 	/* One single-shot conversion of the column's channel. Bounded wait;
 	 * -ETIMEDOUT if the converter never signals completion. */
-	int (*convert)(const struct ec_direct_config *cfg, uint8_t col, int16_t *out);
+	int (*convert)(const struct direct_ec_config *cfg, uint8_t col, int16_t *out);
 	/*
 	 * Optional. One whole cell -- bias, primes, release, ref, strobe edge,
 	 * test, strobe back -- in a single call, for a part where the generic
@@ -92,7 +92,7 @@ struct ec_pair_ops {
 	 * locked; must honour bias_us, prime, bias_pull_up and the strobe's
 	 * polarity. NULL -> the pass runs the steps through the ops above.
 	 */
-	int (*cell)(const struct ec_direct_config *cfg, uint8_t col, uint8_t row, int16_t *ref,
+	int (*cell)(const struct direct_ec_config *cfg, uint8_t col, uint8_t row, int16_t *ref,
 		    int16_t *test);
 };
 

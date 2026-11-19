@@ -1,11 +1,11 @@
 /*
- * Shared driver state and the backend interface for zmk,kscan-ec-direct.
+ * Shared driver state and the backend interface for zmk,kscan-direct-ec.
  *
  * Copyright (c) 2026 carrefinho
  * SPDX-License-Identifier: MIT
  *
  * The scan loop, tiers, hysteresis, calibration and shell are SoC-agnostic and
- * live in kscan_ec_direct.c. Everything that touches an ADC or a pad register
+ * live in kscan_direct_ec.c. Everything that touches an ADC or a pad register
  * sits behind `ec_backend`, one implementation per SoC:
  *
  *   backend_nrf.c      nRF52840 via nrfx SAADC, scan-mode block pass
@@ -27,18 +27,18 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
 
-#include <zmk_ec_direct/ec_direct.h>
+#include <zmk_direct_ec/direct_ec.h>
 
 /* Sense lines are bounded by ADC channels, strobes by GPIOs, and the scratch
  * buffers by cells. */
 #define EC_MAX_COLS  8
 #define EC_MAX_ROWS  16
 #define EC_MAX_CELLS 80
-#define NAVG         CONFIG_ZMK_KSCAN_EC_DIRECT_NAVG
+#define NAVG         CONFIG_ZMK_KSCAN_DIRECT_EC_NAVG
 
 struct ec_backend_cfg; /* defined by the backend header included below */
 
-struct ec_direct_config {
+struct direct_ec_config {
 	const struct gpio_dt_spec *strobes;
 	const struct ec_backend_cfg *hw; /* per-SoC pin data, see the backend header */
 	const uint8_t *col_ain;          /* converter channel per sense line (DT order) */
@@ -55,7 +55,7 @@ struct ec_direct_config {
 	const uint16_t *col_strobe_mask;
 };
 
-struct ec_direct_data {
+struct direct_ec_data {
 	const struct device *dev;
 	uint8_t init_stage;
 	int init_rc;
@@ -70,14 +70,14 @@ struct ec_direct_data {
 	 * they are flags it picks up rather than calls. */
 	bool recalibrate;
 	bool force_pass;
-	/* Bench mode, see zmk_ec_direct_bench(). */
+	/* Bench mode, see zmk_direct_ec_bench(). */
 	bool bench;
 	bool bench_applied; /* the host has been told about it */
 	int16_t *snap;      /* where the next per-key pass is copied, or NULL */
 	struct k_sem snap_done;
 
 	/* Tripwire tier. Unused when it is compiled out. */
-	enum zmk_ec_direct_tier tier;
+	enum zmk_direct_ec_tier tier;
 	int32_t tw_baseline[EC_MAX_COLS]; /* all-strobes-high released level */
 	int32_t tw_base_q[EC_MAX_COLS];   /* the same, scaled, for the slow tracker */
 	int32_t tw_value[EC_MAX_COLS];    /* latest tripwire reading */
@@ -110,34 +110,34 @@ struct ec_direct_data {
 	uint32_t hold_backstops;
 
 	struct k_thread thread;
-	K_KERNEL_STACK_MEMBER(stack, CONFIG_ZMK_KSCAN_EC_DIRECT_THREAD_STACK_SIZE);
+	K_KERNEL_STACK_MEMBER(stack, CONFIG_ZMK_KSCAN_DIRECT_EC_THREAD_STACK_SIZE);
 };
 
 struct ec_backend {
 	/* Device init: claim the converter, check the pin map, configure
-	 * channels. `stage` is advanced through the ZMK_EC_DIRECT_INIT_* values
+	 * channels. `stage` is advanced through the ZMK_DIRECT_EC_INIT_* values
 	 * so a failure can be located from the shell. */
-	int (*init)(const struct ec_direct_config *cfg, uint8_t *stage);
+	int (*init)(const struct direct_ec_config *cfg, uint8_t *stage);
 	/* Called once on the scan thread before the first pass. The thread owns
 	 * the converter from here on. */
-	void (*thread_start)(const struct ec_direct_config *cfg);
+	void (*thread_start)(const struct direct_ec_config *cfg);
 	/* Optional, either may be NULL: called around the NAVG sample_pass
 	 * calls of one pass, for a backend that sets up once for all of them. */
-	void (*pass_begin)(const struct ec_direct_config *cfg);
-	void (*pass_end)(const struct ec_direct_config *cfg);
+	void (*pass_begin)(const struct direct_ec_config *cfg);
+	void (*pass_end)(const struct direct_ec_config *cfg);
 	/* One sample of every cell: diff[r * cols + c] = test - ref. */
-	void (*sample_pass)(const struct ec_direct_config *cfg, int16_t *diff);
-	/* Required with CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE. One reading per
+	void (*sample_pass)(const struct direct_ec_config *cfg, int16_t *diff);
+	/* Required with CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE. One reading per
 	 * sense line with every strobe raised together: out[c] = test - ref. A
 	 * failed pass writes zeros, which cannot trip. */
-	void (*tripwire_pass)(const struct ec_direct_config *cfg, int32_t *out);
+	void (*tripwire_pass)(const struct direct_ec_config *cfg, int32_t *out);
 };
 
 extern const struct ec_backend ec_backend;
 
 /* battery_nrf.c: called on the scan thread after a quiet tripwire pass, with
  * the converter disarmed. Takes a reading when one is due. */
-#if IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_BATTERY)
+#if IS_ENABLED(CONFIG_ZMK_KSCAN_DIRECT_EC_BATTERY)
 void ec_battery_tick(void);
 #else
 static inline void ec_battery_tick(void)
@@ -150,5 +150,5 @@ static inline void ec_battery_tick(void)
 #elif defined(CONFIG_SOC_SERIES_SAMD21) || defined(CONFIG_SOC_SERIES_RP2040)
 #include "backend_pair.h"
 #else
-#error "zmk,kscan-ec-direct has no backend for this SoC"
+#error "zmk,kscan-direct-ec has no backend for this SoC"
 #endif

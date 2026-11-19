@@ -1,10 +1,10 @@
 # Copyright (c) 2026 carrefinho
 # SPDX-License-Identifier: MIT
 
-config ZMK_KSCAN_EC_DIRECT
+config ZMK_KSCAN_DIRECT_EC
     bool "EC matrix kscan with no analog front end"
     default y
-    depends on DT_HAS_ZMK_KSCAN_EC_DIRECT_ENABLED
+    depends on DT_HAS_ZMK_KSCAN_DIRECT_EC_ENABLED
     depends on INPUT
     depends on SOC_SERIES_NRF52X || SOC_SERIES_SAMD21 || SOC_SERIES_RP2040
     select GPIO
@@ -14,9 +14,9 @@ config ZMK_KSCAN_EC_DIRECT
       no analog mux, no integrator cap. Sense lines wire straight to ADC
       channels.
 
-if ZMK_KSCAN_EC_DIRECT
+if ZMK_KSCAN_DIRECT_EC
 
-config ZMK_KSCAN_EC_DIRECT_NAVG
+config ZMK_KSCAN_DIRECT_EC_NAVG
     int "Samples per cell per pass"
     default 4
     range 1 16
@@ -24,24 +24,24 @@ config ZMK_KSCAN_EC_DIRECT_NAVG
       Each pass takes this many readings of every cell and reduces them to
       one. Noise falls roughly as 1/sqrt(N) and the pass time rises linearly.
 
-choice ZMK_KSCAN_EC_DIRECT_ESTIMATOR
+choice ZMK_KSCAN_DIRECT_EC_ESTIMATOR
     prompt "How the samples of a cell are reduced to one reading"
-    default ZMK_KSCAN_EC_DIRECT_MEDIAN
+    default ZMK_KSCAN_DIRECT_EC_MEDIAN
 
-config ZMK_KSCAN_EC_DIRECT_MEDIAN
+config ZMK_KSCAN_DIRECT_EC_MEDIAN
     bool "Median"
     help
       Ignores a wild sample outright. The safe choice, and the one to use on
       SAMD21, where an occasional conversion reads low.
 
-config ZMK_KSCAN_EC_DIRECT_TRIMMED_MEAN
+config ZMK_KSCAN_DIRECT_EC_TRIMMED_MEAN
     bool "Trimmed mean"
     help
       Drops the highest and lowest sample and averages the rest. Still immune
       to one wild sample, and lower noise than the median from NAVG 4 up.
       Below NAVG 4 it is the median.
 
-config ZMK_KSCAN_EC_DIRECT_MEAN
+config ZMK_KSCAN_DIRECT_EC_MEAN
     bool "Mean"
     help
       Averages every sample. Lowest noise where the converter never throws a
@@ -50,7 +50,7 @@ config ZMK_KSCAN_EC_DIRECT_MEAN
 
 endchoice
 
-config ZMK_KSCAN_EC_DIRECT_CONFIRM_PASSES
+config ZMK_KSCAN_DIRECT_EC_CONFIRM_PASSES
     int "Passes a new key state must survive before it is reported"
     default 2
     range 1 8
@@ -62,7 +62,7 @@ config ZMK_KSCAN_EC_DIRECT_CONFIRM_PASSES
 
 if SOC_SERIES_NRF52X
 
-config ZMK_KSCAN_EC_DIRECT_REF_INTERVAL
+config ZMK_KSCAN_DIRECT_EC_REF_INTERVAL
     int "Strobes between reference scans"
     default 2
     range 1 16
@@ -73,7 +73,7 @@ config ZMK_KSCAN_EC_DIRECT_REF_INTERVAL
       next to one. Fewer references make a shorter pass but let a held key
       pull its neighbours on the same sense line low.
 
-config ZMK_KSCAN_EC_DIRECT_REF_INTERPOLATE
+config ZMK_KSCAN_DIRECT_EC_REF_INTERPOLATE
     bool "Interpolate each strobe's reference between the two around its group"
     help
       n: each strobe uses the nearer of the two references. y: a straight
@@ -81,7 +81,7 @@ config ZMK_KSCAN_EC_DIRECT_REF_INTERPOLATE
       noise at a long REF_INTERVAL, but a held key then shifts the other
       keys on its line more. Leave it off unless REF_INTERVAL is above 2.
 
-config ZMK_KSCAN_EC_DIRECT_TRIPWIRE
+config ZMK_KSCAN_DIRECT_EC_TRIPWIRE
     bool "Idle tripwire tier"
     default y
     help
@@ -93,20 +93,20 @@ config ZMK_KSCAN_EC_DIRECT_TRIPWIRE
       On a 36-key board this is about 40 uA idle against 1.5 mA for scanning
       continuously. Say n for a board that is always on USB power.
 
-if ZMK_KSCAN_EC_DIRECT_TRIPWIRE
+if ZMK_KSCAN_DIRECT_EC_TRIPWIRE
 
-config ZMK_KSCAN_EC_DIRECT_TRIPWIRE_THRESHOLD
+config ZMK_KSCAN_DIRECT_EC_TRIPWIRE_THRESHOLD
     int "Trip when a sense line reads this far over its tripwire baseline"
     default 70
     range 1 4095
     help
       Set it from the board: about a third of what the weakest key adds to
       its line when pressed, and several times the largest quiet reading
-      (`ecd status` shows both). A false trip costs ACTIVE_HOLD_MS of
+      (`ec status` shows both). A false trip costs ACTIVE_HOLD_MS of
       per-key scanning, so one a minute is nothing and one a second is most
       of the idle saving gone.
 
-config ZMK_KSCAN_EC_DIRECT_TRIPWIRE_PERIOD_MS
+config ZMK_KSCAN_DIRECT_EC_TRIPWIRE_PERIOD_MS
     int "Idle tripwire period, ms"
     default 33
     range 1 1000
@@ -115,12 +115,12 @@ config ZMK_KSCAN_EC_DIRECT_TRIPWIRE_PERIOD_MS
       the period can fall between two passes and be lost; at 100 ms quick
       taps do get lost.
 
-config ZMK_KSCAN_EC_DIRECT_TRIPWIRE_CAL_PASSES
+config ZMK_KSCAN_DIRECT_EC_TRIPWIRE_CAL_PASSES
     int "Tripwire passes whose median becomes the baseline"
     default 8
     range 8 64
 
-config ZMK_KSCAN_EC_DIRECT_TRIPWIRE_TRACK_SHIFT
+config ZMK_KSCAN_DIRECT_EC_TRIPWIRE_TRACK_SHIFT
     int "Tripwire baseline follows the quiet reading, 2^n passes"
     default 8
     range 0 12
@@ -131,14 +131,14 @@ config ZMK_KSCAN_EC_DIRECT_TRIPWIRE_TRACK_SHIFT
       of 2^n tripwire passes (8 is 8.5 s at 33 ms). Passes that trip are not
       followed.
 
-config ZMK_KSCAN_EC_DIRECT_ACTIVE_HOLD_MS
+config ZMK_KSCAN_DIRECT_EC_ACTIVE_HOLD_MS
     int "Keep scanning keys this long after the last release, ms"
     default 400
     help
       Applies once the warm period below is over. During it the shorter
       TW_WARM_ACTIVE_HOLD_MS is used.
 
-config ZMK_KSCAN_EC_DIRECT_TW_WARM_HOLD_MS
+config ZMK_KSCAN_DIRECT_EC_TW_WARM_HOLD_MS
     int "Stay warm this long after the last confirmed key, ms"
     default 10000
     help
@@ -148,7 +148,7 @@ config ZMK_KSCAN_EC_DIRECT_TW_WARM_HOLD_MS
       about a seventh of the per-key pass's current. Only a confirmed key
       extends it, not a gate crossing nothing confirmed.
 
-config ZMK_KSCAN_EC_DIRECT_TW_WARM_PERIOD_MS
+config ZMK_KSCAN_DIRECT_EC_TW_WARM_PERIOD_MS
     int "Warm tripwire period, ms"
     default 4
     range 1 1000
@@ -156,7 +156,7 @@ config ZMK_KSCAN_EC_DIRECT_TW_WARM_PERIOD_MS
       Also the latency of every key in a typing burst after the first. Match
       it to poll-interval-ms.
 
-config ZMK_KSCAN_EC_DIRECT_TW_WARM_THRESHOLD
+config ZMK_KSCAN_DIRECT_EC_TW_WARM_THRESHOLD
     int "Warm gate threshold, counts over the tripwire baseline"
     default 40
     range 1 4095
@@ -164,26 +164,26 @@ config ZMK_KSCAN_EC_DIRECT_TW_WARM_THRESHOLD
       A miss costs one per-key pass, so this can sit close to the noise:
       about twice the largest quiet reading.
 
-config ZMK_KSCAN_EC_DIRECT_TW_WARM_ACTIVE_HOLD_MS
+config ZMK_KSCAN_DIRECT_EC_TW_WARM_ACTIVE_HOLD_MS
     int "Per-key hold after a release while warm, ms"
     default 12
     help
       The gate catches the next press at the same rate, so the long hold has
       nothing left to cover. Three passes let the release settle.
 
-config ZMK_KSCAN_EC_DIRECT_TW_DORMANT_AFTER_MS
+config ZMK_KSCAN_DIRECT_EC_TW_DORMANT_AFTER_MS
     int "Go dormant this long after the last confirmed key, ms"
     default 1800000
     help
       Dormant trades the first key after a long break for standby current,
       so the default waits 30 minutes.
 
-config ZMK_KSCAN_EC_DIRECT_TW_DORMANT_PERIOD_MS
+config ZMK_KSCAN_DIRECT_EC_TW_DORMANT_PERIOD_MS
     int "Dormant tripwire period, ms"
     default 50
     range 1 1000
 
-config ZMK_KSCAN_EC_DIRECT_TW_HOLD_WATCH
+config ZMK_KSCAN_DIRECT_EC_TW_HOLD_WATCH
     bool "Watch held keys with the tripwire pass"
     default y
     help
@@ -195,9 +195,9 @@ config ZMK_KSCAN_EC_DIRECT_TW_HOLD_WATCH
       latency stays at the poll period, and a held key costs about a fifth
       of the per-key pass's current.
 
-if ZMK_KSCAN_EC_DIRECT_TW_HOLD_WATCH
+if ZMK_KSCAN_DIRECT_EC_TW_HOLD_WATCH
 
-config ZMK_KSCAN_EC_DIRECT_TW_HOLD_EDGE
+config ZMK_KSCAN_DIRECT_EC_TW_HOLD_EDGE
     int "Rise on a line, counts, that ends a hold watch"
     default 100
     range 1 4095
@@ -205,7 +205,7 @@ config ZMK_KSCAN_EC_DIRECT_TW_HOLD_EDGE
       Under half of what the weakest key adds to its line, and clear of the
       creep as a finger settles after a press.
 
-config ZMK_KSCAN_EC_DIRECT_TW_HOLD_RELEASE_EDGE
+config ZMK_KSCAN_DIRECT_EC_TW_HOLD_RELEASE_EDGE
     int "Drop on a line, counts, that ends a hold watch"
     default 60
     range 1 4095
@@ -213,11 +213,11 @@ config ZMK_KSCAN_EC_DIRECT_TW_HOLD_RELEASE_EDGE
       The held baseline follows the line upward only, so this is the total
       drop since the hold settled, however slowly it came.
 
-config ZMK_KSCAN_EC_DIRECT_TW_HOLD_BACKSTOP_MS
+config ZMK_KSCAN_DIRECT_EC_TW_HOLD_BACKSTOP_MS
     int "Run a per-key pass at least this often while watching a hold, ms"
     default 50
 
-config ZMK_KSCAN_EC_DIRECT_TW_HOLD_TRACK_SHIFT
+config ZMK_KSCAN_DIRECT_EC_TW_HOLD_TRACK_SHIFT
     int "Held baseline follows the line upward by 1/2^n per pass"
     default 4
     range 0 8
@@ -225,63 +225,63 @@ config ZMK_KSCAN_EC_DIRECT_TW_HOLD_TRACK_SHIFT
       Absorbs the settling creep so a long hold cannot drift into a false
       press edge.
 
-config ZMK_KSCAN_EC_DIRECT_TW_HOLD_SETTLE_PASSES
+config ZMK_KSCAN_DIRECT_EC_TW_HOLD_SETTLE_PASSES
     int "Per-key passes with no change before a hold watch starts"
     default 2
     range 1 16
 
-endif # ZMK_KSCAN_EC_DIRECT_TW_HOLD_WATCH
+endif # ZMK_KSCAN_DIRECT_EC_TW_HOLD_WATCH
 
-endif # ZMK_KSCAN_EC_DIRECT_TRIPWIRE
+endif # ZMK_KSCAN_DIRECT_EC_TRIPWIRE
 
-config ZMK_KSCAN_EC_DIRECT_BATTERY
+config ZMK_KSCAN_DIRECT_EC_BATTERY
     bool "Battery divider read by the scan thread"
     default y
-    depends on DT_HAS_ZMK_EC_DIRECT_BATTERY_ENABLED
-    depends on ZMK_KSCAN_EC_DIRECT_TRIPWIRE
+    depends on DT_HAS_ZMK_DIRECT_EC_BATTERY_ENABLED
+    depends on ZMK_KSCAN_DIRECT_EC_TRIPWIRE
     select SENSOR
     help
       This driver owns the SAADC, so ZMK's own battery driver cannot run
-      beside it. With a zmk,ec-direct-battery node the scan thread reads the
+      beside it. With a zmk,direct-ec-battery node the scan thread reads the
       divider right after a tripwire pass and the sensor device returns the
       last value. Point the zmk,battery chosen node at it. A key held for a
       long time leaves the value stale until it is released.
 
-config ZMK_KSCAN_EC_DIRECT_BATTERY_INTERVAL_S
+config ZMK_KSCAN_DIRECT_EC_BATTERY_INTERVAL_S
     int "Seconds between battery readings"
     default 30
-    depends on ZMK_KSCAN_EC_DIRECT_BATTERY
+    depends on ZMK_KSCAN_DIRECT_EC_BATTERY
 
 endif # SOC_SERIES_NRF52X
 
-config ZMK_KSCAN_EC_DIRECT_SHELL
-    bool "`ecd` shell commands"
+config ZMK_KSCAN_DIRECT_EC_SHELL
+    bool "`ec` shell commands"
     default y
     depends on SHELL
     help
-      `ecd status` shows every cell's baseline and reading, `ecd zero` takes
-      the resting levels again, `ecd threshold` and `ecd comp` try values on
+      `ec status` shows every cell's baseline and reading, `ec zero` takes
+      the resting levels again, `ec threshold` and `ec comp` try values on
       the running board. For bringing up a new board; a finished
       keyboard has no need for it.
 
-config ZMK_KSCAN_EC_DIRECT_BRINGUP
-    bool "`ecd rest`, `fit`, `calibrate` and `export`"
+config ZMK_KSCAN_DIRECT_EC_BRINGUP
+    bool "`ec rest`, `fit`, `calibrate` and `export`"
     default y
-    depends on ZMK_KSCAN_EC_DIRECT_SHELL
+    depends on ZMK_KSCAN_DIRECT_EC_SHELL
     help
       The commands that characterise a board: resting levels and noise with
       hands off, the load compensation scale from a row of held keys, every
       key's swing from one press each, and devicetree lines to paste. They
       draw the board from the selected physical layout when it has key
-      positions. They cost about 1.6 kB of RAM. The ec-direct-shell snippet
+      positions. They cost about 1.6 kB of RAM. The direct-ec-shell snippet
       builds an image with them.
 
-config ZMK_KSCAN_EC_DIRECT_THREAD_STACK_SIZE
+config ZMK_KSCAN_DIRECT_EC_THREAD_STACK_SIZE
     int "Scan thread stack size"
     default 1024
 
-config ZMK_KSCAN_EC_DIRECT_THREAD_PRIORITY
+config ZMK_KSCAN_DIRECT_EC_THREAD_PRIORITY
     int "Scan thread priority"
     default 2
 
-endif # ZMK_KSCAN_EC_DIRECT
+endif # ZMK_KSCAN_DIRECT_EC

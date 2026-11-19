@@ -1,0 +1,4 @@
+name: direct-ec-shell
+append:
+  EXTRA_CONF_FILE: direct-ec-shell.conf
+  EXTRA_DTC_OVERLAY_FILE: direct-ec-shell.overlay

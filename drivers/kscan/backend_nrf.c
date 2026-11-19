@@ -1,5 +1,5 @@
 /*
- * nRF52840 backend for zmk,kscan-ec-direct, through nrfx.
+ * nRF52840 backend for zmk,kscan-direct-ec, through nrfx.
  *
  * Copyright (c) 2026 carrefinho
  * SPDX-License-Identifier: MIT
@@ -18,7 +18,7 @@
 
 #include "backend_nrf.h"
 
-LOG_MODULE_DECLARE(kscan_ec_direct, CONFIG_INPUT_LOG_LEVEL);
+LOG_MODULE_DECLARE(kscan_direct_ec, CONFIG_INPUT_LOG_LEVEL);
 
 static uint32_t col_chan_mask;
 
@@ -104,8 +104,8 @@ void ec_saadc_disarm(void)
  * Interval 2 with the nearest reference keeps every test beside one that has
  * seen the same step, which is why it is the default.
  */
-#define REF_INTERVAL CONFIG_ZMK_KSCAN_EC_DIRECT_REF_INTERVAL
-#define REF_INTERP   IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_REF_INTERPOLATE)
+#define REF_INTERVAL CONFIG_ZMK_KSCAN_DIRECT_EC_REF_INTERVAL
+#define REF_INTERP   IS_ENABLED(CONFIG_ZMK_KSCAN_DIRECT_EC_REF_INTERPOLATE)
 
 /* All NAVG samples of a pass land back to back in this buffer under one arm.
  * Static, never the stack: an EasyDMA buffer on a thread stack keeps the
@@ -115,7 +115,7 @@ static int16_t ec_pass_buf[EC_PASS_LEN * NAVG];
 static uint8_t pass_n; /* strobes per group */
 static uint8_t pass_k; /* sample index within the pass */
 
-static inline uint16_t pass_total(const struct ec_direct_config *cfg)
+static inline uint16_t pass_total(const struct direct_ec_config *cfg)
 {
 	return cfg->cols * (cfg->rows + DIV_ROUND_UP(cfg->rows, pass_n) + 1);
 }
@@ -134,7 +134,7 @@ static inline uint16_t pass_total(const struct ec_direct_config *cfg)
  */
 static uint8_t scan_last_ch;
 
-static void scan_wait_setup(const struct ec_direct_config *cfg)
+static void scan_wait_setup(const struct direct_ec_config *cfg)
 {
 	scan_last_ch = cfg->cols - 1;
 	nrf_saadc_channel_limits_set(NRF_SAADC, scan_last_ch, INT16_MIN, INT16_MIN);
@@ -184,7 +184,7 @@ static void scan_wait_end(void)
 	nrf_saadc_event_clear(NRF_SAADC, NRF_SAADC_EVENT_RESULTDONE);
 }
 
-static void nrf_pass_begin(const struct ec_direct_config *cfg)
+static void nrf_pass_begin(const struct direct_ec_config *cfg)
 {
 	pass_n = MIN(REF_INTERVAL, cfg->rows);
 	pass_k = 0;
@@ -198,14 +198,14 @@ static void nrf_pass_begin(const struct ec_direct_config *cfg)
 	}
 }
 
-static void nrf_pass_end(const struct ec_direct_config *cfg)
+static void nrf_pass_end(const struct direct_ec_config *cfg)
 {
 	ARG_UNUSED(cfg);
 	ec_saadc_disarm();
 	scan_wait_teardown();
 }
 
-static void nrf_sample_pass(const struct ec_direct_config *cfg, int16_t *diff)
+static void nrf_sample_pass(const struct direct_ec_config *cfg, int16_t *diff)
 {
 	const uint8_t n = pass_n;
 	const uint8_t groups = DIV_ROUND_UP(cfg->rows, n);
@@ -259,7 +259,7 @@ static void nrf_sample_pass(const struct ec_direct_config *cfg, int16_t *diff)
 
 /* --- tripwire pass --------------------------------------------------- */
 
-#if IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE)
+#if IS_ENABLED(CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE)
 
 /*
  * All strobes in one write per port: OUTSET/OUTCLR are port-wide masked
@@ -275,7 +275,7 @@ static struct port_group strobe_ports[2];
 static uint8_t n_strobe_ports;
 static bool strobe_masked;
 
-static void strobes_init(const struct ec_direct_config *cfg)
+static void strobes_init(const struct direct_ec_config *cfg)
 {
 	n_strobe_ports = 0;
 	strobe_masked = false;
@@ -306,7 +306,7 @@ static void strobes_init(const struct ec_direct_config *cfg)
 	strobe_masked = true;
 }
 
-static void all_strobes(const struct ec_direct_config *cfg, int level)
+static void all_strobes(const struct direct_ec_config *cfg, int level)
 {
 	if (!strobe_masked) {
 		for (uint8_t r = 0; r < cfg->rows; r++) {
@@ -346,7 +346,7 @@ static int16_t tw_buf[2 * EC_MAX_COLS]; /* static, see ec_pass_buf */
 static uint32_t tw_psel_on[EC_MAX_COLS], tw_psel_off;
 static bool tw_psel_known;
 
-static bool tw_psel_learn(const struct ec_direct_config *cfg)
+static bool tw_psel_learn(const struct direct_ec_config *cfg)
 {
 	if (nrfx_saadc_simple_mode_set(col_chan_mask, NRF_SAADC_RESOLUTION_12BIT,
 				       NRF_SAADC_OVERSAMPLE_DISABLED, NULL) != NRFX_SUCCESS) {
@@ -365,7 +365,7 @@ static bool tw_psel_learn(const struct ec_direct_config *cfg)
 	return true;
 }
 
-static void nrf_tripwire_pass(const struct ec_direct_config *cfg, int32_t *out)
+static void nrf_tripwire_pass(const struct direct_ec_config *cfg, int32_t *out)
 {
 	const uint16_t total = 2 * cfg->cols;
 
@@ -417,11 +417,11 @@ static void nrf_tripwire_pass(const struct ec_direct_config *cfg, int32_t *out)
 	}
 }
 
-#endif /* CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE */
+#endif /* CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE */
 
 /* --- init ------------------------------------------------------------ */
 
-static void nrf_thread_start(const struct ec_direct_config *cfg)
+static void nrf_thread_start(const struct direct_ec_config *cfg)
 {
 	col_chan_mask = 0;
 	for (uint8_t c = 0; c < cfg->cols; c++) {
@@ -434,7 +434,7 @@ static void nrf_thread_start(const struct ec_direct_config *cfg)
 	/* nrfx_saadc_init enabled the SAADC line in the NVIC with nothing
 	 * connected to it. The scan wait wants it pending, never taken. */
 	NVIC_DisableIRQ(SAADC_IRQn);
-#if IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE)
+#if IS_ENABLED(CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE)
 	strobes_init(cfg);
 	if (!strobe_masked) {
 		LOG_WRN("tripwire strobes fall back to per-pin writes");
@@ -442,20 +442,20 @@ static void nrf_thread_start(const struct ec_direct_config *cfg)
 #endif
 }
 
-static int nrf_init(const struct ec_direct_config *cfg, uint8_t *stage)
+static int nrf_init(const struct direct_ec_config *cfg, uint8_t *stage)
 {
 	/* Fixed AIN map: AINn <-> P0.<02,03,04,05,28,29,30,31>[n] */
 	static const uint8_t ain_pin[8] = {2, 3, 4, 5, 28, 29, 30, 31};
 	int rc;
 
-	*stage = ZMK_EC_DIRECT_INIT_ADC;
+	*stage = ZMK_DIRECT_EC_INIT_ADC;
 	rc = nrfx_saadc_init(6);
 	if (rc != NRFX_SUCCESS) {
 		LOG_ERR("nrfx_saadc_init failed (%d)", rc);
 		return -ENODEV;
 	}
 
-	*stage = ZMK_EC_DIRECT_INIT_PIN_MAP;
+	*stage = ZMK_DIRECT_EC_INIT_PIN_MAP;
 	for (uint8_t c = 0; c < cfg->cols; c++) {
 		if (cfg->col_ain[c] >= ARRAY_SIZE(ain_pin)) {
 			LOG_ERR("col %u: invalid AIN%u", c, cfg->col_ain[c]);
@@ -471,7 +471,7 @@ static int nrf_init(const struct ec_direct_config *cfg, uint8_t *stage)
 		}
 	}
 
-	*stage = ZMK_EC_DIRECT_INIT_CHANNELS;
+	*stage = ZMK_DIRECT_EC_INIT_CHANNELS;
 	for (uint8_t c = 0; c < cfg->cols; c++) {
 		nrfx_saadc_channel_t ch = NRFX_SAADC_DEFAULT_CHANNEL_SE(EC_AIN(cfg->col_ain[c]), c);
 
@@ -493,7 +493,7 @@ const struct ec_backend ec_backend = {
 	.pass_begin = nrf_pass_begin,
 	.pass_end = nrf_pass_end,
 	.sample_pass = nrf_sample_pass,
-#if IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE)
+#if IS_ENABLED(CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE)
 	.tripwire_pass = nrf_tripwire_pass,
 #endif
 };

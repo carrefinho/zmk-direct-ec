@@ -1,5 +1,5 @@
 /*
- * nRF52840 backend internals for zmk,kscan-ec-direct.
+ * nRF52840 backend internals for zmk,kscan-direct-ec.
  *
  * Copyright (c) 2026 carrefinho
  * SPDX-License-Identifier: MIT
@@ -18,7 +18,7 @@
 #endif
 #include <haly/nrfy_saadc.h>
 
-#include "ec_direct_priv.h"
+#include "direct_ec_priv.h"
 
 /*
  * Newer nrfx routes .pin_p through the generic analog layer

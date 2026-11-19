@@ -1,5 +1,5 @@
 /*
- * Battery level for boards where zmk,kscan-ec-direct owns the nRF52 SAADC.
+ * Battery level for boards where zmk,kscan-direct-ec owns the nRF52 SAADC.
  *
  * Copyright (c) 2026 carrefinho
  * SPDX-License-Identifier: MIT
@@ -16,7 +16,7 @@
  * acquisition, as in the stock driver.
  */
 
-#define DT_DRV_COMPAT zmk_ec_direct_battery
+#define DT_DRV_COMPAT zmk_direct_ec_battery
 
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
@@ -24,17 +24,17 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/atomic.h>
 
-#include "ec_direct_priv.h"
+#include "direct_ec_priv.h"
 
-LOG_MODULE_DECLARE(kscan_ec_direct, CONFIG_INPUT_LOG_LEVEL);
+LOG_MODULE_DECLARE(kscan_direct_ec, CONFIG_INPUT_LOG_LEVEL);
 
-BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1, "one zmk,ec-direct-battery node");
+BUILD_ASSERT(DT_NUM_INST_STATUS_OKAY(DT_DRV_COMPAT) == 1, "one zmk,direct-ec-battery node");
 
 /* The last SAADC channel, clear of the sense lines on channels 0..cols-1. */
 #define BAT_CH      (SAADC_CH_NUM - 1)
 #define BAT_SAMPLES 4
 
-BUILD_ASSERT(DT_PROP_LEN(DT_INST(0, zmk_kscan_ec_direct), ain_channels) <= BAT_CH,
+BUILD_ASSERT(DT_PROP_LEN(DT_INST(0, zmk_kscan_direct_ec), ain_channels) <= BAT_CH,
 	     "the battery channel collides with a sense line");
 
 struct ec_battery_config {
@@ -112,7 +112,7 @@ void ec_battery_tick(void)
 	if (!bat_dev_ready || now < bat_next_ms) {
 		return;
 	}
-	bat_next_ms = now + CONFIG_ZMK_KSCAN_EC_DIRECT_BATTERY_INTERVAL_S * MSEC_PER_SEC;
+	bat_next_ms = now + CONFIG_ZMK_KSCAN_DIRECT_EC_BATTERY_INTERVAL_S * MSEC_PER_SEC;
 
 	int mv = bat_read_mv();
 

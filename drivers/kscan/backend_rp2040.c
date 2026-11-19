@@ -1,5 +1,5 @@
 /*
- * RP2040 pair-pass operations for zmk,kscan-ec-direct.
+ * RP2040 pair-pass operations for zmk,kscan-direct-ec.
  *
  * Copyright (c) 2026 carrefinho
  * SPDX-License-Identifier: MIT
@@ -31,7 +31,7 @@
 
 #include "backend_pair.h"
 
-LOG_MODULE_DECLARE(kscan_ec_direct, CONFIG_INPUT_LOG_LEVEL);
+LOG_MODULE_DECLARE(kscan_direct_ec, CONFIG_INPUT_LOG_LEVEL);
 
 #define AIN_FIRST_GPIO 26
 #define AIN_EXTERNAL   4        /* AINSEL 0..3 are pads */
@@ -45,7 +45,7 @@ LOG_MODULE_DECLARE(kscan_ec_direct, CONFIG_INPUT_LOG_LEVEL);
 
 static uint8_t cur_ain = AIN_NONE;
 
-static inline io_rw_32 *col_pad(const struct ec_direct_config *cfg, uint8_t col)
+static inline io_rw_32 *col_pad(const struct direct_ec_config *cfg, uint8_t col)
 {
 	return &pads_bank0_hw->io[cfg->hw->col_pin[col]];
 }
@@ -56,13 +56,13 @@ static inline io_rw_32 *col_pad(const struct ec_direct_config *cfg, uint8_t col)
  * state on this part, so there is no PMUXEN-style trap.
  * Atomic set/clear aliases, so nothing else in the pad register is rewritten.
  */
-static void rp_bias_on(const struct ec_direct_config *cfg, uint8_t col)
+static void rp_bias_on(const struct direct_ec_config *cfg, uint8_t col)
 {
 	hw_set_bits(col_pad(cfg, col), cfg->bias_pull_up ? PADS_BANK0_GPIO0_PUE_BITS
 							 : PADS_BANK0_GPIO0_PDE_BITS);
 }
 
-static void rp_bias_off(const struct ec_direct_config *cfg, uint8_t col)
+static void rp_bias_off(const struct direct_ec_config *cfg, uint8_t col)
 {
 	hw_clear_bits(col_pad(cfg, col), PADS_BANK0_GPIO0_PUE_BITS | PADS_BANK0_GPIO0_PDE_BITS);
 }
@@ -90,7 +90,7 @@ static inline int adc_conv(int16_t *out)
 	return 0;
 }
 
-static int rp_convert(const struct ec_direct_config *cfg, uint8_t col, int16_t *out)
+static int rp_convert(const struct direct_ec_config *cfg, uint8_t col, int16_t *out)
 {
 	adc_select(cfg->col_ain[col]);
 	return adc_conv(out);
@@ -107,7 +107,7 @@ static int rp_convert(const struct ec_direct_config *cfg, uint8_t col, int16_t *
  * All strobes are in bank 0, the only one SIO's set/clr registers reach.
  */
 __attribute__((optimize("O2")))
-static int rp_cell(const struct ec_direct_config *cfg, uint8_t col, uint8_t row, int16_t *ref,
+static int rp_cell(const struct direct_ec_config *cfg, uint8_t col, uint8_t row, int16_t *ref,
 		   int16_t *test)
 {
 	io_rw_32 *pad = col_pad(cfg, col);
@@ -192,12 +192,12 @@ static int adc_setup(void)
 	return 0;
 }
 
-static int rp_init(const struct ec_direct_config *cfg, uint8_t *stage)
+static int rp_init(const struct direct_ec_config *cfg, uint8_t *stage)
 {
 	const uintptr_t bank0 = DT_REG_ADDR(DT_NODELABEL(gpio0));
 	int rc;
 
-	*stage = ZMK_EC_DIRECT_INIT_PIN_MAP;
+	*stage = ZMK_DIRECT_EC_INIT_PIN_MAP;
 	for (uint8_t c = 0; c < cfg->cols; c++) {
 		uint8_t ain = cfg->col_ain[c];
 		uint8_t pin = cfg->hw->col_pin[c];
@@ -214,14 +214,14 @@ static int rp_init(const struct ec_direct_config *cfg, uint8_t *stage)
 		LOG_INF("col %u: GPIO%u = AINSEL %u", c, pin, ain);
 	}
 
-	*stage = ZMK_EC_DIRECT_INIT_ADC;
+	*stage = ZMK_DIRECT_EC_INIT_ADC;
 	rc = adc_setup();
 	if (rc) {
 		LOG_ERR("ADC setup failed (%d): reset or READY never completed", rc);
 		return rc;
 	}
 
-	*stage = ZMK_EC_DIRECT_INIT_CHANNELS;
+	*stage = ZMK_DIRECT_EC_INIT_CHANNELS;
 	for (uint8_t c = 0; c < cfg->cols; c++) {
 		/* The datasheet's ADC pad state and the only one these pads
 		 * leave: input buffer off, output disabled, no pull. FUNCSEL is

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 description: |
-  Battery voltage divider read by the zmk,kscan-ec-direct scan thread.
+  Battery voltage divider read by the zmk,kscan-direct-ec scan thread.
 
   The EC driver owns the nRF SAADC, so Zephyr's adc and ZMK's
   zmk,battery-voltage-divider cannot run beside it. The scan thread takes the
@@ -12,7 +12,7 @@ description: |
 
   nRF52840 only, and only with the tripwire tier enabled.
 
-compatible: "zmk,ec-direct-battery"
+compatible: "zmk,direct-ec-battery"
 
 include: sensor-device.yaml
 

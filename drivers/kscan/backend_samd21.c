@@ -1,5 +1,5 @@
 /*
- * SAMD21 pair-pass operations for zmk,kscan-ec-direct.
+ * SAMD21 pair-pass operations for zmk,kscan-direct-ec.
  *
  * Copyright (c) 2026 carrefinho
  * SPDX-License-Identifier: MIT
@@ -27,7 +27,7 @@
 
 #include "backend_pair.h"
 
-LOG_MODULE_DECLARE(kscan_ec_direct, CONFIG_INPUT_LOG_LEVEL);
+LOG_MODULE_DECLARE(kscan_direct_ec, CONFIG_INPUT_LOG_LEVEL);
 
 /*
  * MUXPOS -> pad, SAMD21G18A. ain-channels carries MUXPOS, col-gpios the same
@@ -57,7 +57,7 @@ static const uint8_t ain_grp[20] = {
 static bool adc_ok;             /* cleared by any bounded wait that expired */
 static uint8_t cur_muxpos = AIN_NONE;
 
-static inline PortGroup *col_group(const struct ec_direct_config *cfg, uint8_t col)
+static inline PortGroup *col_group(const struct direct_ec_config *cfg, uint8_t col)
 {
 	return (PortGroup *)cfg->hw->col_port[col];
 }
@@ -92,7 +92,7 @@ static inline bool gclk_sync(void)
  * pull is lost, and with PMUXEN=0 the ADC converts the pad perfectly well --
  * so "connect the pin to the ADC" is a no-op here and there is no pinctrl.
  */
-static void samd_bias_on(const struct ec_direct_config *cfg, uint8_t col)
+static void samd_bias_on(const struct direct_ec_config *cfg, uint8_t col)
 {
 	PortGroup *g = col_group(cfg, col);
 	uint8_t pin = cfg->hw->col_pin[col];
@@ -105,7 +105,7 @@ static void samd_bias_on(const struct ec_direct_config *cfg, uint8_t col)
 	g->PINCFG[pin].bit.PULLEN = 1;
 }
 
-static void samd_bias_off(const struct ec_direct_config *cfg, uint8_t col)
+static void samd_bias_off(const struct direct_ec_config *cfg, uint8_t col)
 {
 	PortGroup *g = col_group(cfg, col);
 
@@ -144,7 +144,7 @@ static ALWAYS_INLINE int conv_raw(int16_t *out)
 
 /* The MUXPOS write needs a sync; skipping it when the channel has not
  * changed is most of why the pass is column-major. */
-static ALWAYS_INLINE int select_col(const struct ec_direct_config *cfg, uint8_t col)
+static ALWAYS_INLINE int select_col(const struct direct_ec_config *cfg, uint8_t col)
 {
 	uint8_t ain = cfg->col_ain[col];
 
@@ -158,7 +158,7 @@ static ALWAYS_INLINE int select_col(const struct ec_direct_config *cfg, uint8_t 
 	return 0;
 }
 
-static int samd_convert(const struct ec_direct_config *cfg, uint8_t col, int16_t *out)
+static int samd_convert(const struct direct_ec_config *cfg, uint8_t col, int16_t *out)
 {
 	int rc = select_col(cfg, col);
 
@@ -176,7 +176,7 @@ static int samd_convert(const struct ec_direct_config *cfg, uint8_t col, int16_t
  * so this is PULLEN on and off without a read-modify-write.
  */
 __attribute__((optimize("O2")))
-static int samd_cell(const struct ec_direct_config *cfg, uint8_t col, uint8_t row, int16_t *ref,
+static int samd_cell(const struct direct_ec_config *cfg, uint8_t col, uint8_t row, int16_t *ref,
 		     int16_t *test)
 {
 	PortGroup *g = col_group(cfg, col);
@@ -320,19 +320,19 @@ static int adc_setup(void)
 	return adc_ok ? 0 : -EIO;
 }
 
-static int samd_init(const struct ec_direct_config *cfg, uint8_t *stage)
+static int samd_init(const struct direct_ec_config *cfg, uint8_t *stage)
 {
 	uintptr_t porta = (uintptr_t)&PORT->Group[0];
 	int rc;
 
-	*stage = ZMK_EC_DIRECT_INIT_ADC;
+	*stage = ZMK_DIRECT_EC_INIT_ADC;
 	rc = adc_setup();
 	if (rc) {
 		LOG_ERR("ADC setup failed (%d): a sync or conversion never completed", rc);
 		return rc;
 	}
 
-	*stage = ZMK_EC_DIRECT_INIT_PIN_MAP;
+	*stage = ZMK_DIRECT_EC_INIT_PIN_MAP;
 	for (uint8_t c = 0; c < cfg->cols; c++) {
 		uint8_t ain = cfg->col_ain[c];
 		uintptr_t base = cfg->hw->col_port[c];
@@ -351,7 +351,7 @@ static int samd_init(const struct ec_direct_config *cfg, uint8_t *stage)
 		LOG_INF("col %u: P%c%02u = MUXPOS %u", c, 'A' + grp, pin, ain);
 	}
 
-	*stage = ZMK_EC_DIRECT_INIT_CHANNELS;
+	*stage = ZMK_DIRECT_EC_INIT_CHANNELS;
 	for (uint8_t c = 0; c < cfg->cols; c++) {
 		PortGroup *g = col_group(cfg, c);
 		uint8_t pin = cfg->hw->col_pin[c];
