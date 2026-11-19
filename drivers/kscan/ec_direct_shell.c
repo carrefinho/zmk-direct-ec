@@ -1,6 +1,6 @@
 /*
- * Shell for zmk,kscan-ec-direct: look at the readings, re-take the baselines
- * and try thresholds on a running board.
+ * Shell for zmk,kscan-ec-direct: look at the readings, take the resting
+ * levels again and try thresholds on a running board.
  *
  * Copyright (c) 2026 carrefinho
  * SPDX-License-Identifier: MIT
@@ -83,13 +83,13 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 
 	zmk_ec_direct_get_init_status(dev, &stage, &rc);
 	if (!device_is_ready(dev)) {
-		shell_error(sh, "driver failed to start: init stage %u, rc %d", stage, rc);
+		shell_error(sh, "The driver failed to start: init stage %u, rc %d.", stage, rc);
 		return -ENODEV;
 	}
 	/* The grid is not scanned while the tripwire holds. */
 	rc = zmk_ec_direct_force_pass(dev);
 	if (rc) {
-		shell_warn(sh, "no fresh pass (%d), showing the last one", rc);
+		shell_warn(sh, "No fresh pass (%d). Showing the last one.", rc);
 	}
 	zmk_ec_direct_get_size(dev, &rows, &cols);
 	zmk_ec_direct_get_thresholds(dev, &press, &release);
@@ -100,7 +100,7 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
-static int cmd_calibrate(const struct shell *sh, size_t argc, char **argv)
+static int cmd_zero(const struct shell *sh, size_t argc, char **argv)
 {
 	int rc;
 
@@ -109,10 +109,10 @@ static int cmd_calibrate(const struct shell *sh, size_t argc, char **argv)
 
 	rc = zmk_ec_direct_calibrate(dev);
 	if (rc) {
-		shell_error(sh, "calibration did not finish (%d)", rc);
+		shell_error(sh, "The resting levels were not taken (%d).", rc);
 		return rc;
 	}
-	shell_print(sh, "released baselines re-taken");
+	shell_print(sh, "Took the current readings as each key's resting level.");
 	return 0;
 }
 
@@ -124,12 +124,12 @@ static int cmd_threshold(const struct shell *sh, size_t argc, char **argv)
 		press = (uint16_t)strtoul(argv[1], NULL, 0);
 		release = (uint16_t)strtoul(argv[2], NULL, 0);
 		if (release >= press) {
-			shell_error(sh, "release must be below press");
+			shell_error(sh, "The release threshold must be below the press threshold.");
 			return -EINVAL;
 		}
 		zmk_ec_direct_set_thresholds(dev, press, release);
 	} else if (argc != 1) {
-		shell_error(sh, "threshold <press> <release>");
+		shell_error(sh, "Usage: ecd threshold <press> <release>");
 		return -EINVAL;
 	}
 	zmk_ec_direct_get_thresholds(dev, &press, &release);
@@ -139,11 +139,6 @@ static int cmd_threshold(const struct shell *sh, size_t argc, char **argv)
 
 static int cmd_comp(const struct shell *sh, size_t argc, char **argv)
 {
-#if IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_BRINGUP)
-	if (argc == 2 && !strcmp(argv[1], "fit")) {
-		return ecd_cmd_comp_fit(sh, dev);
-	}
-#endif
 	if (argc == 2) {
 		zmk_ec_direct_set_load_comp(dev, (uint16_t)strtoul(argv[1], NULL, 0));
 	}
@@ -152,45 +147,63 @@ static int cmd_comp(const struct shell *sh, size_t argc, char **argv)
 }
 
 #if IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_BRINGUP)
-static int cmd_check(const struct shell *sh, size_t argc, char **argv)
+static int cmd_rest(const struct shell *sh, size_t argc, char **argv)
 {
-	return ecd_cmd_check(sh, dev);
+	return ecd_cmd_rest(sh, dev);
 }
 
-static int cmd_survey(const struct shell *sh, size_t argc, char **argv)
+static int cmd_fit(const struct shell *sh, size_t argc, char **argv)
 {
-	return ecd_cmd_survey(sh, dev);
+	return ecd_cmd_fit(sh, dev);
 }
 
-static int cmd_report(const struct shell *sh, size_t argc, char **argv)
+static int cmd_calibrate(const struct shell *sh, size_t argc, char **argv)
 {
-	return ecd_cmd_report(sh, dev);
+	return ecd_cmd_calibrate(sh, dev);
+}
+
+static int cmd_export(const struct shell *sh, size_t argc, char **argv)
+{
+	return ecd_cmd_export(sh, dev);
 }
 #endif
 
+/* Zephyr lists subcommands in this order: the guided ones first. */
 SHELL_STATIC_SUBCMD_SET_CREATE(
 	sub_ecd,
-	SHELL_CMD_ARG(status, NULL,
-		      "Every cell's baseline and reading (* = pressed), and the tripwire state",
-		      cmd_status, 1, 0),
-	SHELL_CMD_ARG(calibrate, NULL, "Re-take the released baselines. Every key must be up",
+#if IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_BRINGUP)
+	SHELL_CMD_ARG(rest, NULL,
+		      "Hands off: each key's resting level and noise, dead or open cells flagged",
+		      cmd_rest, 1, 0),
+	SHELL_CMD_ARG(fit, NULL,
+		      "Fit load compensation: hold the shown keys down one after another",
+		      cmd_fit, 1, 0),
+	SHELL_CMD_ARG(calibrate, NULL,
+		      "Press every key once: each key's swing, weak and missing keys",
 		      cmd_calibrate, 1, 0),
+	SHELL_CMD_ARG(export, NULL,
+		      "What rest, fit and calibrate found, as devicetree to paste",
+		      cmd_export, 1, 0),
+#endif
+	SHELL_CMD_ARG(status, NULL,
+		      "One pass: every cell's baseline and reading (* = pressed), and the "
+		      "tripwire state",
+		      cmd_status, 1, 0),
+	SHELL_CMD_ARG(zero, NULL,
+		      "Take the current readings as each key's resting level. Every key must "
+		      "be up",
+		      cmd_zero, 1, 0),
 	SHELL_CMD_ARG(threshold, NULL, "Show, or set until reset: threshold <press> <release>",
 		      cmd_threshold, 1, 2),
 	SHELL_CMD_ARG(comp, NULL,
-		      "Show, or set until reset, the load compensation scale: comp <K>, 0 = off"
-		      IF_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_BRINGUP,
-				 (". comp fit: measure it from a row of held keys")),
+		      "Show, or set until reset, the load compensation scale: comp <K>, 0 = off",
 		      cmd_comp, 1, 1),
-#if IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_BRINGUP)
-	SHELL_CMD_ARG(check, NULL,
-		      "Hands off: every key's resting level and noise, odd cells flagged",
-		      cmd_check, 1, 0),
-	SHELL_CMD_ARG(survey, NULL, "Press every key once: each key's swing, weakest keys",
-		      cmd_survey, 1, 0),
-	SHELL_CMD_ARG(report, NULL, "What check, comp fit and survey found, ready to paste",
-		      cmd_report, 1, 0),
-#endif
 	SHELL_SUBCMD_SET_END);
 
-SHELL_CMD_REGISTER(ecd, &sub_ecd, "EC matrix", NULL);
+/* No handler: a bare `ecd` prints the list above, with this as its title. */
+#if IS_ENABLED(CONFIG_ZMK_KSCAN_EC_DIRECT_BRINGUP)
+#define ECD_HELP "EC matrix. Start with `ecd rest`, then `ecd calibrate`."
+#else
+#define ECD_HELP "EC matrix"
+#endif
+SHELL_CMD_REGISTER(ecd, &sub_ecd, ECD_HELP, NULL);

@@ -28,7 +28,7 @@ Go through your board's `.dts` and check every peripheral against your pin list.
 - **NFC pins on nRF52840.** Caroline strobes on P0.09 and P0.10. They need `nfct-pins-as-gpios` in `&uicr`. A fresh chip resets once on first boot while it writes this.
 - **Shared analog switches.** On the XIAO RP2040 Plus, D3 reaches GPIO29 through an analog switch that also connects the battery divider. A `gpio-hog` on GPIO24 holds it on the D3 side.
 
-If you disable the UART that was the console, the `ecd` shell needs somewhere else to go. Add a CDC ACM UART under `&zephyr_udc0`, the same setup ZMK's [USB logging page](https://zmk.dev/docs/development/usb-logging) uses. Then point both `zephyr,console` and `zephyr,shell-uart` at it. Caroline's SAMD21 and RP2040 overlays have the full snippet.
+The `ecd` shell doesn't need the board's console UART. The `ec-direct-shell` snippet adds its own USB serial port, so you can disable that UART if you need its pins.
 
 ## Step 2: sense lines
 
@@ -103,10 +103,9 @@ ZMK's docs only show `kscan`. `input` is in the [binding](https://github.com/zmk
 
 ## Step 5: first flash
 
-Start with a bench config: the shell on, a one-layer keymap where every key types something distinct, and thresholds set loose. Add to the `.conf`:
+Start with a bench config: a one-layer keymap where every key types something distinct, thresholds set loose, and the `ecd` shell. Build with `-S ec-direct-shell`, or `snippet: ec-direct-shell` in `build.yaml`. Add to the `.conf`:
 
 ```
-CONFIG_SHELL=y
 CONFIG_INPUT=y
 ```
 
@@ -116,9 +115,10 @@ Thresholds from another board are fine to boot with. Caroline's first images use
 
 **No key may be held at power-on.** The board takes each key's released level when it starts.
 
-Flash, open the serial port, and run `ecd status`. Check that:
+Flash, open the shell's serial port (the board shows a second one with the snippet), and run `ecd rest` with your hands off. It prints each key's resting level and noise, and flags keys that look open, held, shorted or much noisier than the rest. A whole strobe or sense line that fails together is named once, with its keys, so you can go straight to that pin.
 
-- Every cell you expect shows up and reads a small steady number at rest.
+Then run `ecd status` while you hold keys, and check that:
+
 - Pressing a key moves only that key, and by a lot more than the idle wobble.
 - A finger near a pad moves one sense line's keys together. If a group of keys moves together that shouldn't share a line, your `ain-channels` and `col-gpios` are out of step, or a jumper is wrong.
 
@@ -144,9 +144,19 @@ For SAMD21 and RP2040, Caroline found `settle-us = <0>` read the same as 200 and
 
 Do this on the fully assembled board, with plate, domes and housings. The bare PCB reads very differently. Caroline's SAMD21 build lost about 40 % of its signal going from a bare spring to the full stack.
 
-### Lone presses
+### Load compensation
 
-Hold each key alone and note its reading in `ecd status`. You want the weakest key. Caroline's raw spread:
+Every held key makes the other keys on its sense line read lower. On Caroline's SAMD21 build, each held key took 15–20 % off the rest of its five-key line. With all five down, Q fell from 284 to 137, and an unpressed key read about −75. On the ten-key lines it was 5–9 % per key. So a threshold that works for single presses can miss keys during fast rolls.
+
+`load-comp-scale` corrects this, and `ecd fit` measures it. It shows the keys on one sense line. Press at least four of them one after another, as many as is comfortable, keep them all down, then let go. Holding every key on a long line doesn't make K any better. Pressing each key about as hard as the last does, since one finger's pressure moves that key's estimate by up to 20 %. Each key gives an estimate, and it moves on to the next line. Do as many lines as you like: it stops 10 s after the last key, or when every line is done. K is the median of all the estimates, applied until reset.
+
+The good range is broad. Caroline's hand-tuned values were 3600 (nRF52840), 3850 (SAMD21) and 4000 (RP2040), each a bit under 4095. `ecd fit` later gave 3830 and 3864 on the nRF52840 and SAMD21 boards. K belongs to the board and controller, so refit it if either changes.
+
+### Swing per key
+
+Run `ecd calibrate` after `ecd fit`, because K changes even a lone key's reading. It asks you to press every key once, all the way down, and prints each key's swing on the board. It lists the weakest keys, keys you didn't press, and keys that need a deeper press than the rest. If keys next to a held one dipped or rose a lot, it tells you K is off and to run `ecd fit` again.
+
+You want the weakest key. Caroline's spread before compensation:
 
 | Controller | Weakest | Median | Strongest |
 |---|---|---|---|
@@ -154,22 +164,11 @@ Hold each key alone and note its reading in `ecd status`. You want the weakest k
 | SAMD21, 5 keys a line | 284 | 391 | 506 |
 | RP2040, 10 keys a line | 165 | 262 | 327 |
 
-### Rollover
-
-Now hold several keys on one sense line and watch the others drop. On Caroline's SAMD21 build, each held key took 15–20 % off the rest of its five-key line. With all five down, Q fell from 284 to 137, and an unpressed key read about −75. On the ten-key lines it was 5–9 % per key. So a threshold that works for single presses can miss keys during fast rolls.
-
-`load-comp-scale` corrects this. To find it:
-
-1. Hold keys one at a time along a full sense line, adding one each step, and record the readings.
-2. Try values with `ecd comp <K>` until a held key reads about the same from one neighbour down to all of them, and an unpressed key on that line stays near 0.
-
-The good range is broad. Caroline landed on 3600 (nRF52840), 3850 (SAMD21) and 4000 (RP2040), each a bit under 4095. Start around 3800. K belongs to the board and controller, so refit it if either changes.
-
-After that, the compensated lone presses are what you set thresholds against. On SAMD21 the weakest went from 284 to 346.
+With compensation on, the SAMD21's weakest went from 284 to 346. The compensated swings are what you set thresholds against.
 
 ### Picking thresholds
 
-Run `ecd status` with nothing pressed and note the idle wobble. Then:
+`ecd rest` gives the idle noise. Then:
 
 - Press threshold about 40–45 % of the weakest compensated key.
 - Release threshold about two thirds of the press threshold.
@@ -183,7 +182,7 @@ Try them live with `ecd threshold <press> <release>`. Caroline's final values:
 | SAMD21 | 150 | 100 | 3850 |
 | RP2040 | 100 | 65 | 4000 |
 
-Nothing set from the shell is saved. Copy the numbers into the overlay, with a comment saying where they came from. Caroline's overlays keep the measurements next to the values, which helps when you come back to retune.
+Nothing set from the shell is saved. `ecd export` prints the thresholds, `load-comp-scale` and the per-key table as devicetree lines. Copy them into the overlay, with a comment saying where they came from. Caroline's overlays keep the measurements next to the values, which helps when you come back to retune.
 
 ### Check on a bad power supply
 
@@ -205,7 +204,7 @@ Set `CONFIG_ZMK_KSCAN_EC_DIRECT_TRIPWIRE=n` if the board is always on USB.
 
 ## Step 9: the release build
 
-Once the numbers are in the overlay, turn the shell off before you add your real keymap. On SAMD21, Caroline's bench shell plus its full keymap ran out of RAM by 2.7 kB.
+Once the numbers are in the overlay, build without the `ec-direct-shell` snippet before you add your real keymap. On SAMD21, Caroline's bench shell plus its full keymap ran out of RAM by 2.7 kB.
 
 ## Checklist
 

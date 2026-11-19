@@ -77,17 +77,30 @@ ec_battery: ec_battery {
 
 The scan thread reads the divider between idle passes, so the value does not update while a key is held down.
 
-## Finding the thresholds
+## Measuring a board
 
-Signal levels depend on the PCB, the domes and the plate, so thresholds have to be measured on the actual board. Build with `CONFIG_SHELL=y` and a console (USB CDC ACM works) to get the `ecd` commands.
+Signal levels depend on the PCB, the domes and the plate, so thresholds have to be measured on the actual board. Build with the `ec-direct-shell` snippet to get the `ecd` commands on a USB serial port: `-S ec-direct-shell` on the `west build` line, or `snippet: ec-direct-shell` in `build.yaml`. It works on nRF52840, SAMD21 and RP2040, and the board still types. It's an image for measuring, not the one to run day to day.
 
-`ecd status` prints every key's released baseline and its current reading relative to that baseline. Run it with nothing pressed to see the idle noise, then with each key held to find the weakest one. A press threshold around 40 % of the weakest key, with the release threshold at about two thirds of that, is a reasonable starting point. `ecd threshold <press> <release>` and `ecd comp <K>` apply values to the running board so you can try them, and `ecd calibrate` takes the released baselines again. On nRF52840, `ecd status` also shows what each sense line reads in the idle pass and the largest reading seen while quiet; the tripwire threshold should sit several times above that quiet maximum and well below what the weakest key adds.
+The commands, in the order a board designer runs them:
+
+| Command | What you do | What you get |
+|---|---|---|
+| `ecd rest` | keep your hands off | each key's resting level and noise; open, held, shorted or noisy keys flagged |
+| `ecd fit` | hold the keys it shows down one after another, then let go | `load-comp-scale`, applied until reset |
+| `ecd calibrate` | press every key once | each key's swing; weak, missing and hard-to-press keys |
+| `ecd export` | nothing | the thresholds, `load-comp-scale` and the per-key table as devicetree lines to paste |
+
+Someone checking a build of an existing design only needs `ecd rest`, then `ecd calibrate`.
+
+`fit`, `calibrate` and `rest` draw the board from the selected physical layout when it has key positions, and fall back to a strobe × sense line grid when it doesn't. While a command runs, no key reaches the host, so pressing keys doesn't type into the terminal. Every command ends by itself.
+
+A press threshold around 40 % of the weakest key's swing, with the release threshold at about two thirds of that, is a reasonable starting point. `ecd threshold <press> <release>` and `ecd comp <K>` set values on the running board so you can try them. `ecd zero` takes the resting levels again. `ecd status` prints one pass of every cell's baseline and reading. On nRF52840 it also shows what each sense line reads in the idle pass and the largest reading seen while quiet; the tripwire threshold should sit several times above that quiet maximum and well below what the weakest key adds.
 
 Nothing set from the shell is stored. Once the numbers are right, put them in the overlay and the shield's `.conf`.
 
 ## Limitations
 
-The released baselines are taken at power-on, so no key may be held while the board starts. There is no stored calibration yet, and the thresholds are one pair of values for the whole board rather than per key.
+The resting levels are taken at power-on, so no key may be held while the board starts. `ecd zero` takes them again. There is no stored calibration yet, and the thresholds are one pair of values for the whole board rather than per key.
 
 On nRF52840, leave `CONFIG_ZMK_SLEEP` off. An EC key cannot wake the chip from deep sleep, and the idle tier already brings the scan cost down to tens of microamps.
 

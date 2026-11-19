@@ -259,20 +259,21 @@ config ZMK_KSCAN_EC_DIRECT_SHELL
     default y
     depends on SHELL
     help
-      `ecd status` shows every cell's baseline and reading, `ecd calibrate`
-      re-takes the released baselines, `ecd threshold` and `ecd comp` try
-      values on the running board. For bringing up a new board; a finished
+      `ecd status` shows every cell's baseline and reading, `ecd zero` takes
+      the resting levels again, `ecd threshold` and `ecd comp` try values on
+      the running board. For bringing up a new board; a finished
       keyboard has no need for it.
 
 config ZMK_KSCAN_EC_DIRECT_BRINGUP
-    bool "`ecd check`, `survey`, `comp fit` and `report`"
+    bool "`ecd rest`, `fit`, `calibrate` and `export`"
     default y
     depends on ZMK_KSCAN_EC_DIRECT_SHELL
     help
       The commands that characterise a board: resting levels and noise with
       hands off, the load compensation scale from a row of held keys, every
-      key's swing from one press each, and a report to paste into the
-      devicetree. They cost about 1.3 kB of RAM. The ec-direct-shell snippet
+      key's swing from one press each, and devicetree lines to paste. They
+      draw the board from the selected physical layout when it has key
+      positions. They cost about 1.6 kB of RAM. The ec-direct-shell snippet
       builds an image with them.
 
 config ZMK_KSCAN_EC_DIRECT_THREAD_STACK_SIZE

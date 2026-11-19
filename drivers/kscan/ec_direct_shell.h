@@ -10,7 +10,7 @@
 #include <zephyr/device.h>
 #include <zephyr/shell/shell.h>
 
-int ecd_cmd_check(const struct shell *sh, const struct device *dev);
-int ecd_cmd_survey(const struct shell *sh, const struct device *dev);
-int ecd_cmd_comp_fit(const struct shell *sh, const struct device *dev);
-int ecd_cmd_report(const struct shell *sh, const struct device *dev);
+int ecd_cmd_rest(const struct shell *sh, const struct device *dev);
+int ecd_cmd_fit(const struct shell *sh, const struct device *dev);
+int ecd_cmd_calibrate(const struct shell *sh, const struct device *dev);
+int ecd_cmd_export(const struct shell *sh, const struct device *dev);
