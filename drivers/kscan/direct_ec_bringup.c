@@ -48,8 +48,12 @@
 #define STABLE_PASSES 25
 /* A key has to drop by this much between its two states to give a K. */
 #define FIT_MIN_DROP 8
-/* Estimates kept across every roll of a fit. */
-#define FIT_MAX_EST (2 * EC_MAX_CELLS)
+/* Estimates kept across every roll of a fit, and rolls. */
+#define FIT_MAX_EST   (2 * EC_MAX_CELLS)
+#define FIT_MAX_ROLLS 32
+/* calibrate: a sense line whose median swing is under this share of the
+ * board's reads weak as a line. */
+#define WEAK_LINE_PCT 80
 
 #define CALIBRATE_IDLE_MS 20000
 #define FIT_FIRST_MS      30000
@@ -86,6 +90,7 @@ static union {
 		uint16_t s1[EC_MAX_CELLS]; /* its line's sum then */
 		int16_t v2[EC_MAX_CELLS];  /* reading with the most keys held */
 		int16_t est[FIT_MAX_EST];  /* every estimate from every roll */
+		int16_t roll[FIT_MAX_ROLLS]; /* each roll's median estimate */
 	} fit;
 } w;
 
@@ -99,7 +104,7 @@ static struct {
 	int16_t swing[EC_MAX_CELLS]; /* 0 = not pressed in calibrate */
 	uint16_t pp_median, pp_worst;
 	uint16_t sd10_median, sd10_worst;
-	uint16_t fit_k, fit_n;
+	uint16_t fit_k, fit_n, fit_rolls;
 	/* Unpressed keys while another key on their line was held. */
 	int16_t dip, rise;
 	size_t dip_i, rise_i;
@@ -310,6 +315,13 @@ static int cmp_i16(const void *a, const void *b)
 	return *(const int16_t *)a - *(const int16_t *)b;
 }
 
+/* Middle of a sorted array. An even count takes the mean of the two middle
+ * values: picking the upper one pulled `fit`'s K up. */
+static int16_t mid(const int16_t *v, uint16_t n)
+{
+	return n % 2 ? v[n / 2] : ((int32_t)v[n / 2 - 1] + v[n / 2]) / 2;
+}
+
 /* Median of v over the keys, skipping zeros if asked. Uses `snap`. */
 static int16_t median(const int16_t *v, bool skip_zero, uint16_t *count)
 {
@@ -329,7 +341,7 @@ static int16_t median(const int16_t *v, bool skip_zero, uint16_t *count)
 		return 0;
 	}
 	qsort(snap, n, sizeof(snap[0]), cmp_i16);
-	return snap[n / 2];
+	return mid(snap, n);
 }
 
 static uint32_t isqrt(uint32_t v)
@@ -742,7 +754,6 @@ static void cal_summary(const struct shell *sh, const struct device *dev, int16_
 {
 	uint16_t missing[EC_MAX_COLS] = {0}, deep[EC_MAX_COLS] = {0};
 	uint16_t press, release, seen, shown = 0;
-	uint8_t lines = 0, weak_lines = 0;
 	int16_t med, last = 0;
 	size_t last_i = 0;
 	bool any_missing = false, any_deep = false;
@@ -796,26 +807,38 @@ static void cal_summary(const struct shell *sh, const struct device *dev, int16_
 			    best * 2 < med ? "  <- under half the median, check its dome" : "");
 	}
 
-	/* A whole weak sense line is its pin or routing, not its domes, so it
-	 * is named once. Caroline's RP2040 has one behind an analog switch.
-	 * Only when other lines are fine: if all are weak, it's the threshold. */
+	/*
+	 * A sense line whose keys all read weak is its pin or routing, not its
+	 * domes, so it is named once. Caroline's RP2040 has one behind an
+	 * analog switch. It is judged by the line's median against the board's,
+	 * so one key just inside the press-point limit does not split it up.
+	 */
 	for (uint8_t c = 0; c < res.cols; c++) {
-		lines += res.mask[c] != 0;
-		weak_lines += __builtin_popcount(res.mask[c]) >= 2 && deep[c] == res.mask[c];
-	}
-	for (uint8_t c = 0; weak_lines < lines && c < res.cols; c++) {
 		uint16_t one[EC_MAX_COLS] = {0};
+		int16_t line[EC_MAX_ROWS];
+		uint8_t n = 0;
 
-		if (__builtin_popcount(res.mask[c]) < 2 || deep[c] != res.mask[c]) {
+		for (uint8_t r = 0; r < res.rows; r++) {
+			if (IS_KEY(r, c) && res.swing[CELL(r, c)]) {
+				line[n++] = res.swing[CELL(r, c)];
+			}
+		}
+		if (n < 2) {
 			continue;
 		}
-		one[c] = deep[c];
-		deep[c] = 0;
+		qsort(line, n, sizeof(line[0]), cmp_i16);
+		if (mid(line, n) * 100 >= med * WEAK_LINE_PCT) {
+			continue;
+		}
+		one[c] = res.mask[c] & ~missing[c];
 		shell_fprintf(sh, SHELL_WARNING, "Sense line %u (", c);
 		print_keys(sh, SHELL_WARNING, false, one);
-		shell_fprintf(sh, SHELL_WARNING, ") reads weaker than the others: the press point "
-						 "is over 40 %% of every key's travel. Check that "
-						 "line's pin and routing, or lower `press-threshold`.\n");
+		shell_fprintf(sh, SHELL_WARNING, ") reads weaker than the others: median swing %d "
+						 "against %d for the board. Check that line's pin "
+						 "and routing, not its domes.%s\n",
+			      mid(line, n), med,
+			      deep[c] ? " Lower `press-threshold` if its keys miss presses." : "");
+		deep[c] = 0;
 	}
 	any_deep = false;
 	for (uint8_t c = 0; c < res.cols; c++) {
@@ -1049,7 +1072,7 @@ static bool suggest(const struct shell *sh, uint8_t from, uint16_t rolled, bool 
  * of them is the answer.
  */
 static void fit_line(const struct shell *sh, uint8_t c, uint16_t held, uint16_t s2,
-		     uint16_t *n_est)
+		     uint16_t *n_est, uint16_t *n_rolls)
 {
 	uint16_t none[EC_MAX_COLS] = {0};
 	int16_t k[EC_MAX_ROWS];
@@ -1087,8 +1110,11 @@ static void fit_line(const struct shell *sh, uint8_t c, uint16_t held, uint16_t 
 		return;
 	}
 	qsort(k, n, sizeof(k[0]), cmp_i16);
+	if (*n_rolls < FIT_MAX_ROLLS) {
+		w.fit.roll[(*n_rolls)++] = mid(k, n);
+	}
 	shell_print(sh, "%u keys held: K %d to %d, median %d.", __builtin_popcount(held), k[0],
-		    k[n - 1], k[n / 2]);
+		    k[n - 1], mid(k, n));
 	if (none[c]) {
 		shell_fprintf(sh, SHELL_WARNING, "No estimate from ");
 		print_keys(sh, SHELL_WARNING, false, none);
@@ -1101,7 +1127,7 @@ int ec_cmd_fit(const struct shell *sh, const struct device *dev)
 	uint16_t prev[EC_MAX_COLS] = {0}, held[EC_MAX_COLS] = {0}, s2[EC_MAX_COLS] = {0};
 	uint8_t stable[EC_MAX_COLS] = {0}, most[EC_MAX_COLS] = {0};
 	uint16_t k_old = zmk_direct_ec_get_load_comp(dev);
-	uint16_t n = 0, rolled = 0;
+	uint16_t n = 0, rolls = 0, rolled = 0;
 	int16_t detect, k_new;
 	int64_t t0, last_ms;
 	bool all_done = false;
@@ -1189,7 +1215,7 @@ int ec_cmd_fit(const struct shell *sh, const struct device *dev)
 				}
 			} else if (most[c]) {
 				if (most[c] >= 2) {
-					fit_line(sh, c, held[c], s2[c], &n);
+					fit_line(sh, c, held[c], s2[c], &n, &rolls);
 					rolled |= BIT(c);
 					all_done = !suggest(sh, c + 1, rolled, false);
 				}
@@ -1216,14 +1242,23 @@ int ec_cmd_fit(const struct shell *sh, const struct device *dev)
 		rc = -ENODATA;
 		goto out;
 	}
+	/*
+	 * K is the median of each roll's median, not of every estimate: the
+	 * estimates lean high (a K at or under the line's own sum is thrown
+	 * out, a high one never is), and pooling them lets each long line's
+	 * high tail pull K up.
+	 */
 	qsort(w.fit.est, n, sizeof(w.fit.est[0]), cmp_i16);
-	k_new = w.fit.est[n / 2];
+	qsort(w.fit.roll, rolls, sizeof(w.fit.roll[0]), cmp_i16);
+	k_new = mid(w.fit.roll, rolls);
 	res.fit_k = k_old = k_new;
 	res.fit_n = n;
-	shell_print(sh, "K = %d, the median of %u estimates (%d to %d).", k_new, n, w.fit.est[0],
-		    w.fit.est[n - 1]);
-	if (n < 5) {
-		shell_warn(sh, "Only %u estimates. Another line gives a steadier K.", n);
+	res.fit_rolls = rolls;
+	shell_print(sh, "K = %d, the median of %u lines (%u estimates, %d to %d).", k_new, rolls,
+		    n, w.fit.est[0], w.fit.est[n - 1]);
+	if (rolls < 2 || n < 5) {
+		shell_warn(sh, "Only %u line%s and %u estimates. Another line gives a steadier K.",
+			   rolls, rolls == 1 ? "" : "s", n);
 	}
 	shell_print(sh, "load-comp-scale = <%d>;  applied until reset. Run `ec calibrate` next.",
 		    k_new);
@@ -1271,7 +1306,8 @@ int ec_cmd_export(const struct shell *sh, const struct device *dev)
 	}
 	shell_print(sh, "");
 	if (res.fit_n) {
-		shell_print(sh, "K %u from %u estimates.", res.fit_k, res.fit_n);
+		shell_print(sh, "K %u from %u lines, %u estimates.", res.fit_k, res.fit_rolls,
+			    res.fit_n);
 	}
 	if (res.have_rest) {
 		shell_print(sh, "Noise: median %u peak to peak (sd %u.%u), worst %u (sd %u.%u).",

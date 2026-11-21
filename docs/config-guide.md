@@ -148,13 +148,13 @@ Do this on the fully assembled board, with plate, domes and housings. The bare P
 
 Every held key makes the other keys on its sense line read lower. On Caroline's SAMD21 build, each held key took 15–20 % off the rest of its five-key line. With all five down, Q fell from 284 to 137, and an unpressed key read about −75. On the ten-key lines it was 5–9 % per key. So a threshold that works for single presses can miss keys during fast rolls.
 
-`load-comp-scale` corrects this, and `ec fit` measures it. It shows the keys on one sense line. Press at least four of them one after another, as many as is comfortable, keep them all down, then let go. Holding every key on a long line doesn't make K any better. Pressing each key about as hard as the last does, since one finger's pressure moves that key's estimate by up to 20 %. Each key gives an estimate, and it moves on to the next line. Do as many lines as you like: it stops 10 s after the last key, or when every line is done. K is the median of all the estimates, applied until reset.
+`load-comp-scale` corrects this, and `ec fit` measures it. It shows the keys on one sense line. Press at least four of them one after another, as many as is comfortable, keep them all down, then let go. Holding every key on a long line doesn't make K any better. Pressing each key about as hard as the last does, since one finger's pressure moves that key's estimate by up to 20 %. Each key gives an estimate, and it moves on to the next line. Do as many lines as you like: it stops 10 s after the last key, or when every line is done. K is the median of each line's median estimate, applied until reset.
 
 The good range is broad. Caroline's hand-tuned values were 3600 (nRF52840), 3850 (SAMD21) and 4000 (RP2040), each a bit under 4095. `ec fit` later gave 3830 and 3864 on the nRF52840 and SAMD21 boards. K belongs to the board and controller, so refit it if either changes.
 
 ### Swing per key
 
-Run `ec calibrate` after `ec fit`, because K changes even a lone key's reading. It asks you to press every key once, all the way down, and prints each key's swing on the board. It lists the weakest keys, keys you didn't press, and keys that need a deeper press than the rest. If keys next to a held one dipped or rose a lot, it tells you K is off and to run `ec fit` again.
+Run `ec calibrate` after `ec fit`, because K changes even a lone key's reading. It asks you to press every key once, all the way down, and prints each key's swing on the board. It lists the weakest keys, keys you didn't press, and keys that need a deeper press than the rest. A whole sense line that reads well under the others is named once, since that points at its pin or routing rather than its domes. If keys next to a held one dipped or rose a lot, it tells you K is off and to run `ec fit` again.
 
 You want the weakest key. Caroline's spread before compensation:
 
