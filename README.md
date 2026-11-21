@@ -87,7 +87,7 @@ The commands, in the order a board designer runs them:
 |---|---|---|
 | `ec rest` | keep your hands off | each key's resting level and noise; open, held, shorted or noisy keys flagged |
 | `ec fit` | hold the keys it shows down one after another, then let go | `load-comp-scale`, applied until reset |
-| `ec calibrate` | press every key once | each key's swing; weak, missing and hard-to-press keys |
+| `ec calibrate` | press every key, once or a few times | each key's swing; weak, missing and hard-to-press keys |
 | `ec export` | nothing | the thresholds, `load-comp-scale` and the per-key table as devicetree lines to paste |
 
 Someone checking a build of an existing design only needs `ec rest`, then `ec calibrate`.

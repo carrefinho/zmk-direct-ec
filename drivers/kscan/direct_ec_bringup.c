@@ -56,6 +56,11 @@
 #define WEAK_LINE_PCT 80
 
 #define CALIBRATE_IDLE_MS 20000
+/* calibrate ends this long after the last key once every key is done, so the
+ * last one can be pressed again. */
+#define CALIBRATE_DONE_MS 5000
+/* Presses kept per key. Its swing is their median. */
+#define CAL_PRESSES 4
 #define FIT_FIRST_MS      30000
 #define FIT_IDLE_MS       10000
 #define FIT_CAP_MS        180000
@@ -83,6 +88,8 @@ static union {
 		int16_t lo[EC_MAX_CELLS];   /* lowest reading of the current block */
 		int16_t peak[EC_MAX_CELLS]; /* highest block of the current press */
 		uint8_t blocks[EC_MAX_CELLS];
+		int16_t press[EC_MAX_CELLS][CAL_PRESSES]; /* the last presses, a ring */
+		uint8_t npress[EC_MAX_CELLS];
 	} cal;
 	struct {
 		int16_t base[EC_MAX_CELLS];
@@ -868,6 +875,44 @@ static void cal_summary(const struct shell *sh, const struct device *dev, int16_
 	shell_print(sh, "`ec export` prints this as devicetree.");
 }
 
+/*
+ * A key's swing from its last presses: their median, leaving out any press
+ * under half the key's best. Taking the best alone favoured the hardest
+ * press; a light touch that still counted is what the cut is for.
+ */
+static int16_t key_swing(size_t i)
+{
+	uint8_t n = MIN(w.cal.npress[i], CAL_PRESSES), k = 0;
+	int16_t best = 0, v[CAL_PRESSES];
+
+	for (uint8_t j = 0; j < n; j++) {
+		best = MAX(best, w.cal.press[i][j]);
+	}
+	for (uint8_t j = 0; j < n; j++) {
+		if (w.cal.press[i][j] * 2 >= best) {
+			v[k++] = w.cal.press[i][j];
+		}
+	}
+	qsort(v, k, sizeof(v[0]), cmp_i16);
+	return mid(v, k);
+}
+
+/* A press under half of what the keys so far average looks like a touch that
+ * never bottomed out. */
+static const char *light_hint(int16_t peak)
+{
+	int32_t sum = 0;
+	uint16_t n = 0;
+
+	FOR_KEYS(r, c) {
+		if (res.swing[CELL(r, c)]) {
+			sum += res.swing[CELL(r, c)];
+			n++;
+		}
+	}
+	return n >= 3 && peak * 2 * n < sum ? "  <- light press? press it again" : "";
+}
+
 int ec_cmd_calibrate(const struct shell *sh, const struct device *dev)
 {
 	uint16_t seen[EC_MAX_COLS] = {0};
@@ -892,13 +937,16 @@ int ec_cmd_calibrate(const struct shell *sh, const struct device *dev)
 	if (rc) {
 		goto out;
 	}
-	shell_print(sh, "Now press each of the %u keys once, all the way down, for about half a "
-			"second.", res.keys);
-	shell_print(sh, "It ends when every key is done, or after %u s with no key.",
-		    CALIBRATE_IDLE_MS / 1000);
+	shell_print(sh, "Now press each of the %u keys all the way down, for about half a "
+			"second each.", res.keys);
+	shell_print(sh, "Once per key is enough. Pressing a key a few more times, in any "
+			"order, gives a steadier number.");
+	shell_print(sh, "It ends %u s after the last key once every key is done, or after "
+			"%u s with no key.", CALIBRATE_DONE_MS / 1000, CALIBRATE_IDLE_MS / 1000);
 
 	memset(res.swing, 0, sizeof(res.swing));
 	memset(w.cal.blocks, 0, sizeof(w.cal.blocks));
+	memset(w.cal.npress, 0, sizeof(w.cal.npress));
 	FOR_KEYS(r, c) {
 		w.cal.lo[CELL(r, c)] = INT16_MAX;
 	}
@@ -941,21 +989,39 @@ int ec_cmd_calibrate(const struct shell *sh, const struct device *dev)
 				/* Released. Too short a press may not have bottomed. */
 				if (w.cal.blocks[i] >= PRESS_BLOCKS) {
 					int16_t peak = w.cal.peak[i];
+					const char *hint = light_hint(peak);
 
+					w.cal.press[i][w.cal.npress[i] % CAL_PRESSES] = peak;
+					if (w.cal.npress[i] < UINT8_MAX) {
+						w.cal.npress[i]++;
+					}
+					res.swing[i] = key_swing(i);
 					if (!(seen[c] & BIT(r))) {
 						seen[c] |= BIT(r);
 						count++;
-						shell_print(sh, "%3u/%u  %4d  %s", count, res.keys,
-							    peak, label(i));
-					} else if (peak > res.swing[i]) {
-						shell_print(sh, "        %4d  %s (again)", peak,
-							    label(i));
+						shell_print(sh, "%3u/%u  %4d  %s%s", count, res.keys,
+							    peak, label(i), hint);
+						/* The hint needs three keys to compare
+						 * against, so look back at the first two. */
+						for (size_t j = 0; count == 3 && j < EC_MAX_CELLS;
+						     j++) {
+							if (j != i && res.swing[j] &&
+							    *light_hint(res.swing[j])) {
+								shell_print(sh, "        %4d  %s%s",
+									    res.swing[j], label(j),
+									    light_hint(res.swing[j]));
+							}
+						}
+						if (count == res.keys) {
+							shell_print(sh, "Every key done. Press any "
+									"again, or wait %u s.",
+								    CALIBRATE_DONE_MS / 1000);
+						}
 					} else {
 						/* `label` first: one buffer per print. */
-						shell_print(sh, "        %4d  %s (again, keeping %d)",
-							    peak, label(i), res.swing[i]);
+						shell_print(sh, "        %4d  %s (again, now %d)%s",
+							    peak, label(i), res.swing[i], hint);
 					}
-					res.swing[i] = MAX(res.swing[i], peak);
 				}
 				w.cal.blocks[i] = 0;
 				last_ms = k_uptime_get();
@@ -1005,7 +1071,8 @@ int ec_cmd_calibrate(const struct shell *sh, const struct device *dev)
 		FOR_KEYS(r, c) {
 			w.cal.lo[CELL(r, c)] = INT16_MAX;
 		}
-		if (count == res.keys && !down) {
+		if (count == res.keys && !down &&
+		    k_uptime_get() - last_ms > CALIBRATE_DONE_MS) {
 			break;
 		}
 		if (k_uptime_get() - last_ms > CALIBRATE_IDLE_MS) {

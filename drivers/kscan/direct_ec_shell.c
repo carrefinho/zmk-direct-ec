@@ -186,7 +186,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 		      "Fit load compensation: hold the shown keys down one after another",
 		      cmd_fit, 1, 0),
 	SHELL_CMD_ARG(calibrate, NULL,
-		      "Press every key once: each key's swing, weak and missing keys",
+		      "Press every key once or more: each key's swing, weak and missing keys",
 		      cmd_calibrate, 1, 0),
 	SHELL_CMD_ARG(export, NULL,
 		      "What rest, fit and calibrate found, as devicetree to paste",

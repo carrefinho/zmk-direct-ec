@@ -154,7 +154,7 @@ The good range is broad. Caroline's hand-tuned values were 3600 (nRF52840), 3850
 
 ### Swing per key
 
-Run `ec calibrate` after `ec fit`, because K changes even a lone key's reading. It asks you to press every key once, all the way down, and prints each key's swing on the board. It lists the weakest keys, keys you didn't press, and keys that need a deeper press than the rest. A whole sense line that reads well under the others is named once, since that points at its pin or routing rather than its domes. If keys next to a held one dipped or rose a lot, it tells you K is off and to run `ec fit` again.
+Run `ec calibrate` after `ec fit`, because K changes even a lone key's reading. It asks you to press every key all the way down. Once is enough; a few more presses per key give a steadier number, since each key's swing is the median of its last four presses, leaving out any light touch under half its best. It ends 5 s after the last key once every key is done. It prints each key's swing on the board. It lists the weakest keys, keys you didn't press, and keys that need a deeper press than the rest. A whole sense line that reads well under the others is named once, since that points at its pin or routing rather than its domes. If keys next to a held one dipped or rose a lot, it tells you K is off and to run `ec fit` again.
 
 You want the weakest key. Caroline's spread before compensation:
 
