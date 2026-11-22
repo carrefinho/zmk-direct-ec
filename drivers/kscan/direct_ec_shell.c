@@ -79,9 +79,36 @@ static void print_grid(const struct shell *sh)
 	}
 }
 
+/* Which rule each key presses by, and how many keys use each. */
+static void print_thresholds(const struct shell *sh)
+{
+	uint16_t press, release, by_swing = 0, by_count = 0;
+	uint8_t rows, cols;
+
+	zmk_direct_ec_get_size(dev, &rows, &cols);
+	for (uint8_t r = 0; r < rows; r++) {
+		for (uint8_t c = 0; c < cols; c++) {
+			struct zmk_direct_ec_cell cell;
+
+			if (zmk_direct_ec_get_cell(dev, r, c, &cell) || !cell.scanned) {
+				continue;
+			}
+			if (cell.swing > 0) {
+				by_swing++;
+			} else {
+				by_count++;
+			}
+		}
+	}
+	zmk_direct_ec_get_thresholds(dev, &press, &release);
+	shell_print(sh, "%u keys press at %u %% of their swing and release at two thirds of that.",
+		    by_swing, zmk_direct_ec_get_actuation(dev));
+	shell_print(sh, "%u keys without a swing press over %u and release under %u.", by_count,
+		    press, release);
+}
+
 static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 {
-	uint16_t press, release;
 	uint8_t rows, cols, stage;
 	int rc;
 
@@ -99,9 +126,9 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 		shell_warn(sh, "No fresh pass (%d). Showing the last one.", rc);
 	}
 	zmk_direct_ec_get_size(dev, &rows, &cols);
-	zmk_direct_ec_get_thresholds(dev, &press, &release);
-	shell_print(sh, "%u strobes x %u sense lines, press over %u, release under %u, comp %u",
-		    rows, cols, press, release, zmk_direct_ec_get_load_comp(dev));
+	shell_print(sh, "%u strobes x %u sense lines, comp %u", rows, cols,
+		    zmk_direct_ec_get_load_comp(dev));
+	print_thresholds(sh);
 	print_tripwire(sh);
 	shell_print(sh, "");
 	print_grid(sh);
@@ -126,22 +153,35 @@ static int cmd_zero(const struct shell *sh, size_t argc, char **argv)
 
 static int cmd_threshold(const struct shell *sh, size_t argc, char **argv)
 {
-	uint16_t press, release;
+	const char *usage = "Usage: ec threshold <percent>%, or ec threshold <press> <release>";
+	char *end;
+	int rc = 0;
 
-	if (argc == 3) {
-		press = (uint16_t)strtoul(argv[1], NULL, 0);
-		release = (uint16_t)strtoul(argv[2], NULL, 0);
+	if (argc == 2) {
+		unsigned long pct = strtoul(argv[1], &end, 10);
+
+		if (end == argv[1] || strcmp(end, "%") || pct < 1 || pct > 99) {
+			shell_error(sh, "%s. The percent is 1 to 99.", usage);
+			return -EINVAL;
+		}
+		rc = zmk_direct_ec_set_actuation(dev, (uint8_t)pct);
+	} else if (argc == 3) {
+		uint16_t press = (uint16_t)strtoul(argv[1], NULL, 0);
+		uint16_t release = (uint16_t)strtoul(argv[2], NULL, 0);
+
 		if (release >= press) {
 			shell_error(sh, "The release threshold must be below the press threshold.");
 			return -EINVAL;
 		}
-		zmk_direct_ec_set_thresholds(dev, press, release);
+		rc = zmk_direct_ec_set_thresholds(dev, press, release);
 	} else if (argc != 1) {
-		shell_error(sh, "Usage: ec threshold <press> <release>");
+		shell_error(sh, "%s", usage);
 		return -EINVAL;
 	}
-	zmk_direct_ec_get_thresholds(dev, &press, &release);
-	shell_print(sh, "press over %u, release under %u", press, release);
+	if (rc) {
+		shell_warn(sh, "The scan has not picked up the change yet (%d).", rc);
+	}
+	print_thresholds(sh);
 	return 0;
 }
 
@@ -201,7 +241,9 @@ SHELL_STATIC_SUBCMD_SET_CREATE(
 		      "Take the current readings as each key's resting level. Every key must "
 		      "be up",
 		      cmd_zero, 1, 0),
-	SHELL_CMD_ARG(threshold, NULL, "Show, or set until reset: threshold <press> <release>",
+	SHELL_CMD_ARG(threshold, NULL,
+		      "Show, or set until reset: threshold <percent>% for keys with a swing, "
+		      "threshold <press> <release> for keys without",
 		      cmd_threshold, 1, 2),
 	SHELL_CMD_ARG(comp, NULL,
 		      "Show, or set until reset, the load compensation scale: comp <K>, 0 = off",

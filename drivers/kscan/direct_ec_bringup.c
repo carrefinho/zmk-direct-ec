@@ -109,6 +109,7 @@ static struct {
 	bool have_rest, have_cal;
 	int16_t rest[EC_MAX_CELLS];
 	int16_t swing[EC_MAX_CELLS]; /* 0 = not pressed in calibrate */
+	int16_t noise[EC_MAX_CELLS]; /* peak to peak at rest */
 	uint16_t pp_median, pp_worst;
 	uint16_t sd10_median, sd10_worst;
 	uint16_t fit_k, fit_n, fit_rolls;
@@ -640,7 +641,6 @@ static bool print_bad(const struct shell *sh, const uint16_t *bad, const char *w
 int ec_cmd_rest(const struct shell *sh, const struct device *dev)
 {
 	uint16_t low[EC_MAX_COLS] = {0}, high[EC_MAX_COLS] = {0}, noisy[EC_MAX_COLS] = {0};
-	uint16_t press, release;
 	int16_t rest_median, moved = 0;
 	size_t worst_i = 0, moved_i = 0;
 	bool have_worst = false, stuck;
@@ -699,6 +699,7 @@ int ec_cmd_rest(const struct shell *sh, const struct device *dev)
 		uint64_t var100 = (uint64_t)(uint32_t)w.rest.sum[i] * 100 / REST_PASSES;
 
 		w.rest.lo[i] = isqrt(MIN(var100, UINT32_MAX));
+		res.noise[i] = w.rest.hi[i];
 		if (!have_worst || w.rest.hi[i] > w.rest.hi[worst_i]) {
 			worst_i = i;
 			have_worst = true;
@@ -725,7 +726,9 @@ int ec_cmd_rest(const struct shell *sh, const struct device *dev)
 		struct zmk_direct_ec_cell cell;
 
 		zmk_direct_ec_get_cell(dev, r, c, &cell);
-		if (abs(res.rest[i] - cell.baseline) > abs(moved)) {
+		/* Counted only past half the key's own release point. */
+		if (abs(res.rest[i] - cell.baseline) > cell.release_point / 2 &&
+		    abs(res.rest[i] - cell.baseline) > abs(moved)) {
 			moved = res.rest[i] - cell.baseline;
 			moved_i = i;
 		}
@@ -748,8 +751,7 @@ int ec_cmd_rest(const struct shell *sh, const struct device *dev)
 	print_bad(sh, noisy, "is much noisier than the others");
 
 	/* Re-zeroing over a stuck key would hide it, so only hint when none is. */
-	zmk_direct_ec_get_thresholds(dev, &press, &release);
-	if (!stuck && abs(moved) > release / 2) {
+	if (!stuck && moved) {
 		shell_print(sh, "Resting levels have moved since they were last taken (%+d on %s). "
 				"`ec zero` takes them again.", moved, label(moved_i));
 	}
@@ -760,13 +762,62 @@ out:
 
 /* --- calibrate ------------------------------------------------------- */
 
+/* A press point under this many times a key's resting noise (peak to peak)
+ * may trip by itself. A guess: no key has been near it yet. */
+#define MARGINAL_NOISE_X 3
+
+/* Keys whose press point sits close to their own noise from `rest`. They are
+ * named, not moved: a raised point would hide the weak dome behind it. */
+static void print_marginal(const struct shell *sh, const struct device *dev)
+{
+	if (!res.have_rest) {
+		shell_print(sh, "Run `ec rest` too, to check each key's press point against its "
+				"noise.");
+		return;
+	}
+	FOR_KEYS(r, c) {
+		size_t i = CELL(r, c);
+		struct zmk_direct_ec_cell cell;
+
+		zmk_direct_ec_get_cell(dev, r, c, &cell);
+		if (cell.press_point < MARGINAL_NOISE_X * res.noise[i]) {
+			/* `label` first: one buffer per print. */
+			shell_fprintf(sh, SHELL_WARNING, "%s", label(i));
+			shell_fprintf(sh, SHELL_WARNING, " is marginal: its press point (+%u) is "
+							 "close to its noise (%d peak to peak). It may "
+							 "trigger by itself.\n",
+				      cell.press_point, res.noise[i]);
+		}
+	}
+}
+
+/* Put the swings just measured into the scan, keeping the ones it had for
+ * keys not pressed this time. */
+static void apply_swings(const struct shell *sh, const struct device *dev)
+{
+	int rc;
+
+	memset(snap, 0, sizeof(snap));
+	FOR_KEYS(r, c) {
+		size_t i = CELL(r, c);
+		struct zmk_direct_ec_cell cell;
+
+		zmk_direct_ec_get_cell(dev, r, c, &cell);
+		snap[i] = res.swing[i] ? res.swing[i] : cell.swing;
+	}
+	rc = zmk_direct_ec_set_swings(dev, snap);
+	if (rc) {
+		shell_warn(sh, "The scan has not picked up the new swings yet (%d).", rc);
+	}
+}
+
 static void cal_summary(const struct shell *sh, const struct device *dev, int16_t detect)
 {
-	uint16_t missing[EC_MAX_COLS] = {0}, deep[EC_MAX_COLS] = {0};
-	uint16_t press, release, seen, shown = 0;
+	uint16_t missing[EC_MAX_COLS] = {0};
+	uint16_t seen, shown = 0;
 	int16_t med, last = 0;
 	size_t last_i = 0;
-	bool any_missing = false, any_deep = false;
+	bool any_missing = false;
 
 	shell_print(sh, "");
 	shell_print(sh, "---");
@@ -778,16 +829,11 @@ static void cal_summary(const struct shell *sh, const struct device *dev, int16_
 		shell_warn(sh, "No key was pressed.");
 		return;
 	}
-	zmk_direct_ec_get_thresholds(dev, &press, &release);
+	apply_swings(sh, dev);
 	FOR_KEYS(r, c) {
-		int16_t s = res.swing[CELL(r, c)];
-
-		if (!s) {
+		if (!res.swing[CELL(r, c)]) {
 			missing[c] |= BIT(r);
 			any_missing = true;
-		} else if (press * 100 > s * 40) {
-			deep[c] |= BIT(r);
-			any_deep = true;
 		}
 	}
 	if (any_missing) {
@@ -848,37 +894,34 @@ static void cal_summary(const struct shell *sh, const struct device *dev, int16_
 		print_keys(sh, SHELL_WARNING, false, one);
 		shell_fprintf(sh, SHELL_WARNING, ") reads weaker than the others: median swing %d "
 						 "against %d for the board. Check that line's pin "
-						 "and routing, not its domes.%s\n",
-			      mid(line, n), med,
-			      deep[c] ? " Lower `press-threshold` if its keys miss presses." : "");
-		deep[c] = 0;
+						 "and routing, not its domes.\n",
+			      mid(line, n), med);
 	}
-	any_deep = false;
-	for (uint8_t c = 0; c < res.cols; c++) {
-		any_deep |= deep[c] != 0;
-	}
-	if (any_deep) {
-		print_keys(sh, SHELL_WARNING, true, deep);
-		shell_fprintf(sh, SHELL_WARNING, " need a deeper press than the rest: the press "
-						 "point is over 40 %% of their travel. Check their "
-						 "domes, or lower `press-threshold`.\n");
-	}
+	print_marginal(sh, dev);
 
-	/* A wrong K shows on the keys next to a held one. With K at 0 the
-	 * warning before the presses has already said so. */
+	/* A wrong K shows on the keys next to a held one, judged against that
+	 * key's own press point. With K at 0 the warning before the presses
+	 * has already said so. */
 	if (zmk_direct_ec_get_load_comp(dev)) {
-		if (-res.dip > press / 2) {
+		struct zmk_direct_ec_cell dip_cell, rise_cell;
+
+		zmk_direct_ec_get_cell(dev, res.dip_i / res.cols, res.dip_i % res.cols, &dip_cell);
+		zmk_direct_ec_get_cell(dev, res.rise_i / res.cols, res.rise_i % res.cols,
+				       &rise_cell);
+		if (-res.dip > dip_cell.press_point / 2) {
 			shell_warn(sh, "Unpressed keys dipped to %+d (%s) while others on their "
 				       "line were held, so K is too high. Run `ec fit` again.",
 				   res.dip, label(res.dip_i));
 		}
-		if (res.rise > press / 2) {
+		if (res.rise > rise_cell.press_point / 2) {
 			shell_warn(sh, "Unpressed keys rose to %+d (%s) while others on their line "
 				       "were held, so K is too low. Run `ec fit` again.",
 				   res.rise, label(res.rise_i));
 		}
 	}
-	shell_print(sh, "`ec export` prints this as devicetree.");
+	shell_print(sh, "The keys now press at %u %% of these swings, until reset. "
+			"`ec export` prints them as devicetree.",
+		    zmk_direct_ec_get_actuation(dev));
 }
 
 /*
@@ -1360,7 +1403,8 @@ out:
 int ec_cmd_export(const struct shell *sh, const struct device *dev)
 {
 	struct zmk_direct_ec_tripwire tw;
-	uint16_t press, release, seen = 0;
+	uint16_t press, release, seen = 0, unswung = 0;
+	uint16_t pt_lo = UINT16_MAX, pt_hi = 0;
 	int16_t med;
 
 	if (!res.have_rest && !res.have_cal) {
@@ -1372,24 +1416,37 @@ int ec_cmd_export(const struct shell *sh, const struct device *dev)
 	zmk_direct_ec_get_tripwire(dev, &tw);
 	/* `label` needs the layout; begin() is not called here. */
 	load_layout();
+	/* The swings in force: this session's, and devicetree's for keys not
+	 * pressed in it. */
+	FOR_KEYS(r, c) {
+		struct zmk_direct_ec_cell cell;
+
+		zmk_direct_ec_get_cell(dev, r, c, &cell);
+		res.swing[CELL(r, c)] = cell.swing;
+		if (cell.swing > 0) {
+			pt_lo = MIN(pt_lo, cell.press_point);
+			pt_hi = MAX(pt_hi, cell.press_point);
+		} else {
+			unswung++;
+		}
+	}
 
 	shell_print(sh, "/* %s, %u strobes x %u sense lines, %u keys, %u samples per key */",
 		    CONFIG_BOARD, res.rows, res.cols, res.keys, NAVG);
 	shell_print(sh, "press-threshold = <%u>;", press);
 	shell_print(sh, "release-threshold = <%u>;", release);
+	shell_print(sh, "actuation-percent = <%u>;", zmk_direct_ec_get_actuation(dev));
 	shell_print(sh, "load-comp-scale = <%u>;%s", zmk_direct_ec_get_load_comp(dev),
 		    res.fit_n ? "" : "  /* not fitted in this session */");
 	shell_print(sh, "");
 	shell_print(sh, "/* Per-key table, one row per strobe, one column per sense line.");
-	shell_print(sh, " * The driver does not read these yet. */");
+	shell_print(sh, " * The driver presses by swing. resting is a reference only. */");
 	if (res.have_rest) {
 		print_array(sh, "resting", res.rest);
 	}
-	if (res.have_cal) {
-		median(res.swing, true, &seen);
-		if (seen) {
-			print_array(sh, "swing", res.swing);
-		}
+	median(res.swing, true, &seen);
+	if (seen) {
+		print_array(sh, "swing", res.swing);
 	}
 	shell_print(sh, "");
 	if (res.fit_n) {
@@ -1401,29 +1458,33 @@ int ec_cmd_export(const struct shell *sh, const struct device *dev)
 			    res.pp_median, res.sd10_median / 10, res.sd10_median % 10,
 			    res.pp_worst, res.sd10_worst / 10, res.sd10_worst % 10);
 	}
-	if (res.have_cal) {
-		med = median(res.swing, true, &seen);
-		if (seen) {
-			shell_print(sh, "Swing: %u of %u keys, min %d, median %d, max %d.", seen,
-				    res.keys, snap[0], med, snap[seen - 1]);
-			shell_print(sh, "Press point %u is %u to %u %% of a key's swing.", press,
-				    press * 100 / snap[seen - 1], press * 100 / snap[0]);
-			/* `label` has one buffer, so one call per print. */
-			shell_fprintf(sh, SHELL_NORMAL, "Unpressed keys on a line with a held one: ");
-			if (res.dip) {
-				shell_fprintf(sh, SHELL_NORMAL, "dipped to %+d (%s)", res.dip,
-					      label(res.dip_i));
-			} else {
-				shell_fprintf(sh, SHELL_NORMAL, "didn't dip");
-			}
-			if (res.rise) {
-				shell_fprintf(sh, SHELL_NORMAL, ", rose to %+d (%s)", res.rise,
-					      label(res.rise_i));
-			} else {
-				shell_fprintf(sh, SHELL_NORMAL, ", didn't rise");
-			}
-			shell_print(sh, ".");
+	med = median(res.swing, true, &seen);
+	if (seen) {
+		shell_print(sh, "Swing: %u of %u keys, min %d, median %d, max %d.", seen, res.keys,
+			    snap[0], med, snap[seen - 1]);
+		shell_print(sh, "Press points: +%u to +%u, at %u %% of each key's swing.", pt_lo,
+			    pt_hi, zmk_direct_ec_get_actuation(dev));
+	}
+	if (unswung) {
+		shell_print(sh, "%u keys without a swing press over %u.", unswung, press);
+	}
+	print_marginal(sh, dev);
+	if (res.have_cal && seen) {
+		/* `label` has one buffer, so one call per print. */
+		shell_fprintf(sh, SHELL_NORMAL, "Unpressed keys on a line with a held one: ");
+		if (res.dip) {
+			shell_fprintf(sh, SHELL_NORMAL, "dipped to %+d (%s)", res.dip,
+				      label(res.dip_i));
+		} else {
+			shell_fprintf(sh, SHELL_NORMAL, "didn't dip");
 		}
+		if (res.rise) {
+			shell_fprintf(sh, SHELL_NORMAL, ", rose to %+d (%s)", res.rise,
+				      label(res.rise_i));
+		} else {
+			shell_fprintf(sh, SHELL_NORMAL, ", didn't rise");
+		}
+		shell_print(sh, ".");
 	}
 	if (tw.enabled) {
 #if defined(CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE_THRESHOLD)

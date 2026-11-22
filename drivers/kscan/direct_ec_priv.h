@@ -63,7 +63,14 @@ struct direct_ec_data {
 	int32_t *value;    /* rows*cols, latest reading */
 	bool *pressed;     /* rows*cols */
 	uint8_t *confirm;  /* rows*cols, consecutive passes wanting a flip */
-	uint16_t press_threshold; /* live-tunable from the shell */
+	/* What the scan compares against, per cell. Only the scan thread writes
+	 * them: the shell changes the inputs below and sets `rethreshold`. */
+	uint16_t *press_pt;
+	uint16_t *release_pt;
+	bool rethreshold;
+	int16_t *swing;           /* rows*cols, 0 = use the shared counts */
+	uint8_t actuation_pct;
+	uint16_t press_threshold; /* shared counts, for keys without a swing */
 	uint16_t release_threshold;
 	uint16_t load_comp_scale; /* 0 = off, see load_comp() */
 	/* Requests from other threads. The scan thread owns the converter, so

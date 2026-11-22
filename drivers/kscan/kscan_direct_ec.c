@@ -452,7 +452,7 @@ static void hold_watch_arm(const struct direct_ec_config *cfg, struct direct_ec_
 		 * hold and miss the rest of the drop until the backstop. */
 		pending = data->confirm[i] != 0 ||
 			  (data->pressed[i] &&
-			   data->value[i] - data->baseline[i] < data->press_threshold);
+			   data->value[i] - data->baseline[i] < data->press_pt[i]);
 	}
 	data->hold_changed = false;
 	if (pending) {
@@ -525,6 +525,20 @@ static void report_cell(const struct device *dev, uint8_t r, uint8_t c, bool pre
 	input_report_key(dev, INPUT_BTN_TOUCH, pressed, true, K_FOREVER);
 }
 
+/* Each cell's press and release points, from its swing or the shared counts. */
+static void thresholds_build(const struct direct_ec_config *cfg, struct direct_ec_data *data)
+{
+	for (size_t i = 0; i < (size_t)cfg->rows * cfg->cols; i++) {
+		if (data->swing[i] > 0) {
+			data->press_pt[i] = data->swing[i] * data->actuation_pct / 100;
+			data->release_pt[i] = data->press_pt[i] * 2 / 3;
+		} else {
+			data->press_pt[i] = data->press_threshold;
+			data->release_pt[i] = data->release_threshold;
+		}
+	}
+}
+
 /* Compare every cell against its thresholds and report the changes. */
 static void report_keys(const struct device *dev)
 {
@@ -553,9 +567,9 @@ static void report_keys(const struct device *dev)
 			bool now = data->pressed[i];
 
 			/* hysteresis: separate press and release thresholds */
-			if (!now && delta > data->press_threshold) {
+			if (!now && delta > data->press_pt[i]) {
 				now = true;
-			} else if (now && delta < data->release_threshold) {
+			} else if (now && delta < data->release_pt[i]) {
 				now = false;
 			}
 
@@ -605,6 +619,10 @@ static void direct_ec_thread(void *p1, void *p2, void *p3)
 	period_reset();
 
 	while (1) {
+		if (data->rethreshold) {
+			thresholds_build(cfg, data);
+			data->rethreshold = false;
+		}
 		if (data->recalibrate) {
 			read_pass(cfg, data->baseline);
 #if IS_ENABLED(CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE)
@@ -700,6 +718,9 @@ int zmk_direct_ec_get_cell(const struct device *dev, uint8_t row, uint8_t col,
 	out->baseline = data->baseline[i];
 	out->pressed = data->pressed[i];
 	out->scanned = !cfg->col_strobe_mask || (cfg->col_strobe_mask[col] & BIT(row));
+	out->swing = data->swing[i];
+	out->press_point = data->press_pt[i];
+	out->release_point = data->release_pt[i];
 	return 0;
 }
 
@@ -745,12 +766,48 @@ uint16_t zmk_direct_ec_get_load_comp(const struct device *dev)
 	return data->load_comp_scale;
 }
 
-void zmk_direct_ec_set_thresholds(const struct device *dev, uint16_t press, uint16_t release)
+/* The scan thread rebuilds the points between passes, so a pass never sees
+ * one key's press point from before a change and its release from after. */
+static int rethreshold(struct direct_ec_data *data)
+{
+	data->rethreshold = true;
+	return wait_flag_clear(&data->rethreshold, 2000);
+}
+
+int zmk_direct_ec_set_thresholds(const struct device *dev, uint16_t press, uint16_t release)
 {
 	struct direct_ec_data *data = dev->data;
 
 	data->press_threshold = press;
 	data->release_threshold = release;
+	return rethreshold(data);
+}
+
+int zmk_direct_ec_set_actuation(const struct device *dev, uint8_t percent)
+{
+	struct direct_ec_data *data = dev->data;
+
+	if (percent < 1 || percent > 99) {
+		return -EINVAL;
+	}
+	data->actuation_pct = percent;
+	return rethreshold(data);
+}
+
+uint8_t zmk_direct_ec_get_actuation(const struct device *dev)
+{
+	const struct direct_ec_data *data = dev->data;
+
+	return data->actuation_pct;
+}
+
+int zmk_direct_ec_set_swings(const struct device *dev, const int16_t *swing)
+{
+	const struct direct_ec_config *cfg = dev->config;
+	struct direct_ec_data *data = dev->data;
+
+	memcpy(data->swing, swing, (size_t)cfg->rows * cfg->cols * sizeof(data->swing[0]));
+	return rethreshold(data);
 }
 
 void zmk_direct_ec_get_thresholds(const struct device *dev, uint16_t *press, uint16_t *release)
@@ -805,6 +862,7 @@ static int direct_ec_init(const struct device *dev)
 
 	data->dev = dev;
 	k_sem_init(&data->snap_done, 0, 1);
+	thresholds_build(cfg, data);
 	data->init_stage = ZMK_DIRECT_EC_INIT_STROBES;
 
 	for (uint8_t r = 0; r < cfg->rows; r++) {
@@ -895,6 +953,12 @@ static int direct_ec_init(const struct device *dev)
 
 #define EC_CELLS(n) (DT_INST_PROP_LEN(n, strobe_gpios) * DT_INST_PROP_LEN(n, ain_channels))
 
+#define SWING_ELEM(idx, n) DT_INST_PROP_BY_IDX(n, swing, idx),
+
+#define EC_TABLE_ASSERT(n, prop)                                                                   \
+	BUILD_ASSERT(DT_INST_PROP_LEN_OR(n, prop, EC_CELLS(n)) == EC_CELLS(n),                     \
+		     #prop " needs one entry per cell: strobes x sense lines");
+
 #define DIRECT_EC_INST(n)                                                                          \
 	static const struct gpio_dt_spec ec_strobes_##n[] = {                                      \
 		LISTIFY(DT_INST_PROP_LEN(n, strobe_gpios), STROBE_SPEC, (), n)};                    \
@@ -910,15 +974,28 @@ static int direct_ec_init(const struct device *dev)
 	BUILD_ASSERT(DT_INST_PROP_LEN(n, strobe_gpios) <= EC_MAX_ROWS,                             \
 		     "more strobes than EC_MAX_ROWS");                                             \
 	BUILD_ASSERT(EC_CELLS(n) <= EC_MAX_CELLS, "more cells than EC_MAX_CELLS");                 \
+	EC_TABLE_ASSERT(n, swing)                                                                  \
+	EC_TABLE_ASSERT(n, resting)                                                                \
+	BUILD_ASSERT(DT_INST_PROP(n, actuation_percent) >= 1 &&                                    \
+			     DT_INST_PROP(n, actuation_percent) <= 99,                             \
+		     "actuation-percent must be 1 to 99");                                         \
 	static int32_t ec_base_##n[EC_CELLS(n)];                                                   \
 	static int32_t ec_val_##n[EC_CELLS(n)];                                                    \
 	static bool ec_pressed_##n[EC_CELLS(n)];                                                   \
 	static uint8_t ec_confirm_##n[EC_CELLS(n)];                                                \
+	static int16_t ec_swing_##n[EC_CELLS(n)] = {                                               \
+		LISTIFY(DT_INST_PROP_LEN_OR(n, swing, 0), SWING_ELEM, (), n)};                      \
+	static uint16_t ec_press_pt_##n[EC_CELLS(n)];                                              \
+	static uint16_t ec_release_pt_##n[EC_CELLS(n)];                                            \
 	static struct direct_ec_data ec_data_##n = {                                               \
 		.baseline = ec_base_##n,                                                           \
 		.value = ec_val_##n,                                                               \
 		.pressed = ec_pressed_##n,                                                         \
 		.confirm = ec_confirm_##n,                                                         \
+		.swing = ec_swing_##n,                                                             \
+		.press_pt = ec_press_pt_##n,                                                       \
+		.release_pt = ec_release_pt_##n,                                                   \
+		.actuation_pct = DT_INST_PROP(n, actuation_percent),                               \
 		.press_threshold = DT_INST_PROP(n, press_threshold),                               \
 		.release_threshold = DT_INST_PROP(n, release_threshold),                           \
 		.load_comp_scale = DT_INST_PROP(n, load_comp_scale),                               \

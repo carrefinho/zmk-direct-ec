@@ -53,13 +53,19 @@ Then describe the matrix in the shield's overlay. The sense pins are listed twic
         press-threshold = <110>;
         release-threshold = <70>;
         poll-interval-ms = <4>;
+
+        /* From `ec export`: one entry per cell, strobes x sense lines. */
+        swing = <
+            305  304  301  356
+            187  398  296    0
+        >;
     };
 };
 ```
 
 The driver is an input device that reports keys at (strobe, sense line). Reference it from the `input` property of your `zmk,physical-layout` node, with a matrix transform whose `rows` is the number of strobes and `columns` the number of sense lines. Do not also set a `kscan` property or a `zmk,kscan` chosen node. A matrix can have up to 8 sense lines, 16 strobes and 80 cells, and a build can have one such node.
 
-`press-threshold` and `release-threshold` are in ADC counts above each key's released level. `load-comp-scale` corrects for the fact that every held key adds capacitance to its sense line and makes the other keys on that line read lower; it is off by default and worth fitting on boards with many keys per line. The remaining properties (`bias-us`, `prime-conversions`, `settle-us`, `bias-pull-up`) only apply to SAMD21 and RP2040. The driver skips any cell the matrix transform doesn't list; `sense-strobe-masks` overrides that, and is rarely needed. All of them are documented in `dts/bindings/kscan/zmk,kscan-direct-ec.yaml`.
+Each key with a `swing` presses at `actuation-percent` (default 40) of it and releases at two thirds of that, so a weak key and a strong one trip at the same depth. `ec calibrate` measures the swings and `ec export` prints the table. `press-threshold` and `release-threshold`, in ADC counts above each key's released level, cover keys whose swing is 0, such as a new board before it is calibrated. `load-comp-scale` corrects for the fact that every held key adds capacitance to its sense line and makes the other keys on that line read lower; it is off by default and worth fitting on boards with many keys per line. The remaining properties (`bias-us`, `prime-conversions`, `settle-us`, `bias-pull-up`) only apply to SAMD21 and RP2040. The driver skips any cell the matrix transform doesn't list; `sense-strobe-masks` overrides that, and is rarely needed. All of them are documented in `dts/bindings/kscan/zmk,kscan-direct-ec.yaml`.
 
 The Kconfig options are in `drivers/kscan/Kconfig`. The ones most boards will touch are `CONFIG_ZMK_KSCAN_DIRECT_EC_NAVG`, the number of samples taken per key per pass (default 4), the choice of how those samples are combined (median, trimmed mean or mean), and on nRF52840 `CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE_THRESHOLD`, which sets how far a sense line has to move to wake the per-key scan. Set `CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE=n` for an nRF52840 board that is always on USB.
 
@@ -87,20 +93,20 @@ The commands, in the order a board designer runs them:
 |---|---|---|
 | `ec rest` | keep your hands off | each key's resting level and noise; open, held, shorted or noisy keys flagged |
 | `ec fit` | hold the keys it shows down one after another, then let go | `load-comp-scale`, applied until reset |
-| `ec calibrate` | press every key, once or a few times | each key's swing; weak, missing and hard-to-press keys |
-| `ec export` | nothing | the thresholds, `load-comp-scale` and the per-key table as devicetree lines to paste |
+| `ec calibrate` | press every key, once or a few times | each key's swing, used until reset; weak, missing and marginal keys |
+| `ec export` | nothing | `actuation-percent`, the fallback thresholds, `load-comp-scale` and the swing table as devicetree lines to paste |
 
 Someone checking a build of an existing design only needs `ec rest`, then `ec calibrate`.
 
 `fit`, `calibrate` and `rest` draw the board from the selected physical layout when it has key positions, and fall back to a strobe × sense line grid when it doesn't. While a command runs, no key reaches the host, so pressing keys doesn't type into the terminal. Every command ends by itself.
 
-A press threshold around 40 % of the weakest key's swing, with the release threshold at about two thirds of that, is a reasonable starting point. `ec threshold <press> <release>` and `ec comp <K>` set values on the running board so you can try them. `ec zero` takes the resting levels again. `ec status` prints one pass of every cell's baseline and reading. On nRF52840 it also shows what each sense line reads in the idle pass and the largest reading seen while quiet; the tripwire threshold should sit several times above that quiet maximum and well below what the weakest key adds.
+A key is marginal when its press point is under three times its own idle noise from `ec rest`; `calibrate` and `export` name such keys. `ec threshold 35%` changes the percent on the running board, `ec threshold <press> <release>` the fallback counts, and `ec comp <K>` the compensation, so you can try them. `ec zero` takes the resting levels again. `ec status` prints one pass of every cell's baseline and reading. On nRF52840 it also shows what each sense line reads in the idle pass and the largest reading seen while quiet; the tripwire threshold should sit several times above that quiet maximum and well below what the weakest key adds.
 
 Nothing set from the shell is stored. Once the numbers are right, put them in the overlay and the shield's `.conf`.
 
 ## Limitations
 
-The resting levels are taken at power-on, so no key may be held while the board starts. `ec zero` takes them again. There is no stored calibration yet, and the thresholds are one pair of values for the whole board rather than per key.
+The resting levels are taken at power-on, so no key may be held while the board starts. `ec zero` takes them again. Swings measured in the shell are not stored yet: paste them into devicetree. The resting levels in `ec export` are a reference only; the driver does not compare against them.
 
 On nRF52840, leave `CONFIG_ZMK_SLEEP` off. An EC key cannot wake the chip from deep sleep, and the idle tier already brings the scan cost down to tens of microamps.
 

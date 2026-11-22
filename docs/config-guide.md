@@ -154,7 +154,7 @@ The good range is broad. Caroline's hand-tuned values were 3600 (nRF52840), 3850
 
 ### Swing per key
 
-Run `ec calibrate` after `ec fit`, because K changes even a lone key's reading. It asks you to press every key all the way down. Once is enough; a few more presses per key give a steadier number, since each key's swing is the median of its last four presses, leaving out any light touch under half its best. It ends 5 s after the last key once every key is done. It prints each key's swing on the board. It lists the weakest keys, keys you didn't press, and keys that need a deeper press than the rest. A whole sense line that reads well under the others is named once, since that points at its pin or routing rather than its domes. If keys next to a held one dipped or rose a lot, it tells you K is off and to run `ec fit` again.
+Run `ec calibrate` after `ec fit`, because K changes even a lone key's reading. It asks you to press every key all the way down. Once is enough; a few more presses per key give a steadier number, since each key's swing is the median of its last four presses, leaving out any light touch under half its best. It ends 5 s after the last key once every key is done. It prints each key's swing on the board. It lists the weakest keys and keys you didn't press, and names any marginal key: one whose press point is under three times its own noise from `ec rest`. When it ends, the scan uses the new swings until reset, so you can type on the result straight away. A whole sense line that reads well under the others is named once, since that points at its pin or routing rather than its domes. If keys next to a held one dipped or rose a lot, it tells you K is off and to run `ec fit` again.
 
 You want the weakest key. Caroline's spread before compensation:
 
@@ -164,29 +164,25 @@ You want the weakest key. Caroline's spread before compensation:
 | SAMD21, 5 keys a line | 284 | 391 | 506 |
 | RP2040, 10 keys a line | 165 | 262 | 327 |
 
-With compensation on, the SAMD21's weakest went from 284 to 346. The compensated swings are what you set thresholds against.
+With compensation on, the SAMD21's weakest went from 284 to 346. The swings are measured compensated, and that is what the press points work from.
 
 ### Picking thresholds
 
-`ec rest` gives the idle noise. Then:
+Each key presses at `actuation-percent` of its own swing and releases at two thirds of that. The default is 40. On all three Carolines that types well, and a slow press trips partway through the dome's collapse. At 30 it trips earlier. 30 is about the lowest worth going: a hard lean on a 28 g dome reached 16 % of its swing, and the release point at 30 is 20 %. Try values live with `ec threshold 35%`.
 
-- Press threshold about 40–45 % of the weakest compensated key.
-- Release threshold about two thirds of the press threshold.
-- Both well clear of idle noise, including with a full line held, since compensation scales noise up too (about 1.5× on Caroline).
+`press-threshold` and `release-threshold` only cover keys without a swing, so a new board types before it is calibrated. Set them loose, around 40 % of the weakest key's swing with release at two thirds. Try them with `ec threshold <press> <release>`. Caroline's values:
 
-Try them live with `ec threshold <press> <release>`. Caroline's final values:
-
-| Controller | Press | Release | `load-comp-scale` |
+| Controller | Press points at 40 % | Fallback press / release | `load-comp-scale` |
 |---|---|---|---|
-| nRF52840 | 110 | 70 | 3600 |
-| SAMD21 | 150 | 100 | 3850 |
-| RP2040 | 100 | 65 | 4000 |
+| nRF52840 | +74 to +168 | 110 / 70 | 3600 |
+| SAMD21 | +164 to +278 | 150 / 100 | 3850 |
+| RP2040 | +88 to +130 | 100 / 65 | 4000 |
 
-Nothing set from the shell is saved. `ec export` prints the thresholds, `load-comp-scale` and the per-key table as devicetree lines. Copy them into the overlay, with a comment saying where they came from. Caroline's overlays keep the measurements next to the values, which helps when you come back to retune.
+Nothing set from the shell is saved. `ec export` prints `actuation-percent`, the fallback thresholds, `load-comp-scale` and the swing table as devicetree lines. Copy them into the overlay, with a comment saying where they came from. Caroline's overlays keep the measurements next to the values, which helps when you come back to retune. A key's swing changes when it is reseated or rebuilt, so calibrate again after that.
 
 ### Check on a bad power supply
 
-USB-powered boards should be checked on the worst charger you have. On a cheap power-strip brick, Caroline's SAMD21 idle noise went up 7–15×, with swings up to ±93. It still had no ghost presses at 150, but the margin was down to 1.8×. If you see ghost keys there, raise the thresholds or the NAVG.
+USB-powered boards should be checked on the worst charger you have. On a cheap power-strip brick, Caroline's SAMD21 idle noise went up 7–15×, with swings up to ±93. It still had no ghost presses at 150, but the margin was down to 1.8×. If you see ghost keys there, raise `actuation-percent` or the NAVG. Measure noise on the supply the board will use: Caroline's nRF52840 read 16 peak to peak on a MacBook running from battery and 24 with its charger plugged in.
 
 ## Step 8: nRF52840 power settings
 
@@ -214,6 +210,6 @@ Once the numbers are in the overlay, build without the `direct-ec-shell` snippet
 - [ ] Transform `rows` = strobes, `columns` = sense lines, entries `RC(strobe, sense)`
 - [ ] Driver in the physical layout's `input`, no `kscan` property or chosen node
 - [ ] Pass time fits inside `poll-interval-ms`
-- [ ] Thresholds and `load-comp-scale` measured on the assembled board
+- [ ] Swings and `load-comp-scale` measured on the assembled board, no marginal keys
 - [ ] Checked on a noisy USB supply
 - [ ] nRF52840: tripwire threshold set, `CONFIG_ZMK_SLEEP=n`, battery node swapped

@@ -28,6 +28,9 @@ struct zmk_direct_ec_cell {
 	int32_t baseline; /* released level from the last calibration */
 	bool pressed;
 	bool scanned; /* false for a cell no layout lists; it reads 0 */
+	int16_t swing;          /* 0 = none, the shared counts apply */
+	uint16_t press_point;   /* counts above baseline, in force now */
+	uint16_t release_point;
 };
 
 /** Snapshot one cell. @p row is the strobe, @p col the sense line. */
@@ -43,8 +46,17 @@ int zmk_direct_ec_calibrate(const struct device *dev);
  */
 int zmk_direct_ec_force_pass(const struct device *dev);
 
-void zmk_direct_ec_set_thresholds(const struct device *dev, uint16_t press, uint16_t release);
+/*
+ * A key with a swing presses at actuation-percent of it and releases at two
+ * thirds of that. A key without one uses the shared counts below. Every
+ * setter lasts until reset and returns once the scan uses the new points.
+ */
+int zmk_direct_ec_set_thresholds(const struct device *dev, uint16_t press, uint16_t release);
 void zmk_direct_ec_get_thresholds(const struct device *dev, uint16_t *press, uint16_t *release);
+int zmk_direct_ec_set_actuation(const struct device *dev, uint8_t percent);
+uint8_t zmk_direct_ec_get_actuation(const struct device *dev);
+/** Replace every swing: rows * cols entries, strobe-major, 0 = none. */
+int zmk_direct_ec_set_swings(const struct device *dev, const int16_t *swing);
 
 /*
  * Bench mode, for the bring-up commands (CONFIG_ZMK_KSCAN_DIRECT_EC_BRINGUP).

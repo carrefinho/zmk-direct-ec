@@ -84,7 +84,7 @@
 ## Bringing a board up
 
 - Keep USB reachable on the first prototype; the `ec` shell is the only instrument.
-- Order of work: `ec rest` to check every cell scans, `ec fit` for `load-comp-scale`, `ec calibrate` to find the weakest key, then set thresholds (about 40–45 % of the weakest compensated key).
+- Order of work: `ec rest` to check every cell scans, `ec fit` for `load-comp-scale`, `ec calibrate` for each key's swing, then `ec export` into the overlay. Each key presses at `actuation-percent` (default 40) of its own swing.
 - A spring seated badly can read less than half of a good one and look fine by eye.
 - Expect an assembled key to read about 40 % under a bare collapsed spring.
 

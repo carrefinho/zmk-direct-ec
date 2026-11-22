@@ -54,22 +54,49 @@ properties:
       GPIO_ACTIVE_LOW makes the strobe idle high and its edge a fall, which is
       what bias-pull-up needs.
 
+  swing:
+    type: array
+    description: |
+      Each key's swing: how far it reads above its resting level when held
+      all the way down, after load compensation. One entry per cell, one row
+      per strobe and one column per sense line, 0 for a cell that is not a
+      key. `ec calibrate` measures it and `ec export` prints this property.
+      A key with a swing presses at actuation-percent of it. A key with 0
+      uses press-threshold and release-threshold.
+
+  resting:
+    type: array
+    description: |
+      Each key's resting level, in the same layout as swing, as `ec export`
+      prints it. Kept as a reference for checking an assembly. The driver
+      does not read it yet, and takes resting levels itself at boot.
+
+  actuation-percent:
+    type: int
+    default: 40
+    description: |
+      Where a key with a swing presses, as a share of that swing. It releases
+      at two thirds of its press point. At 40 a slow press trips partway
+      through the dome's collapse. 30 is about the floor for the lightest
+      domes measured: a hard lean on a 28 g dome reached 16 % of its swing,
+      and the release point at 30 is 20 %.
+
   press-threshold:
     type: int
     default: 200
     description: |
-      Counts above the released baseline to call a key pressed. Set it from
-      the board: `ec status` shows what each key reads released and pressed.
-      Somewhere around 40 % of the weakest key's pressed reading is a good
-      start, as long as that clears idle noise and what a pressed neighbour
-      adds several times over.
+      Counts above the released baseline to call a key pressed, for keys
+      without a swing. With a swing table this only matters for a new board
+      before it is calibrated. Somewhere around 40 % of the weakest key's
+      pressed reading is a good start, as long as that clears idle noise and
+      what a pressed neighbour adds several times over.
 
   release-threshold:
     type: int
     default: 140
     description: |
-      Counts above baseline under which a pressed key releases. Below
-      press-threshold, for hysteresis.
+      Counts above baseline under which a pressed key without a swing
+      releases. Below press-threshold, for hysteresis.
 
   poll-interval-ms:
     type: int
