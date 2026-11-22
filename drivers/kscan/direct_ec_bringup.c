@@ -708,8 +708,10 @@ int ec_cmd_rest(const struct shell *sh, const struct device *dev)
 	res.pp_worst = w.rest.hi[worst_i];
 	res.sd10_worst = w.rest.lo[worst_i];
 
+	shell_print(sh, "");
 	shell_print(sh, "Resting level:");
 	show_values(sh, res.rest, false);
+	shell_print(sh, "");
 	shell_print(sh, "Noise, peak to peak:");
 	show_values(sh, w.rest.hi, false);
 
@@ -737,6 +739,7 @@ int ec_cmd_rest(const struct shell *sh, const struct device *dev)
 		}
 	}
 
+	shell_print(sh, "");
 	shell_print(sh, "%u keys. Resting level: median %d. Noise: median %u peak to peak, "
 			"worst %u on %s.", res.keys, rest_median, res.pp_median, res.pp_worst,
 		    label(worst_i));
@@ -765,8 +768,11 @@ static void cal_summary(const struct shell *sh, const struct device *dev, int16_
 	size_t last_i = 0;
 	bool any_missing = false, any_deep = false;
 
+	shell_print(sh, "");
+	shell_print(sh, "---");
 	shell_print(sh, "Swing per key:");
 	show_values(sh, res.swing, true);
+	shell_print(sh, "");
 	med = median(res.swing, true, &seen);
 	if (!seen) {
 		shell_warn(sh, "No key was pressed.");
@@ -937,6 +943,7 @@ int ec_cmd_calibrate(const struct shell *sh, const struct device *dev)
 	if (rc) {
 		goto out;
 	}
+	shell_print(sh, "");
 	shell_print(sh, "Now press each of the %u keys all the way down, for about half a "
 			"second each.", res.keys);
 	shell_print(sh, "Once per key is enough. Pressing a key a few more times, in any "
@@ -1104,12 +1111,23 @@ static bool suggest(const struct shell *sh, uint8_t from, uint16_t rolled, bool 
 {
 	uint16_t sel[EC_MAX_COLS] = {0};
 	const struct view v = {.sel = sel};
+	uint8_t total = 0, done = 0;
 
+	for (uint8_t c = 0; c < res.cols; c++) {
+		if (fittable(c)) {
+			total++;
+			if (rolled & BIT(c)) {
+				done++;
+			}
+		}
+	}
 	for (uint8_t k = 0; k < res.cols; k++) {
 		uint8_t c = (from + k) % res.cols;
 
 		if (fittable(c) && !(rolled & BIT(c))) {
 			sel[c] = res.mask[c];
+			shell_print(sh, "");
+			shell_print(sh, "--- line %u/%u ---", done + 1, total);
 			if (__builtin_popcount(res.mask[c]) > FIT_ASK_KEYS) {
 				shell_print(sh, "%s at least %u of these, as many as is comfortable, "
 						"one after another. Keep them all down, then let go:",
@@ -1300,6 +1318,8 @@ int ec_cmd_fit(const struct shell *sh, const struct device *dev)
 			break;
 		}
 	}
+	shell_print(sh, "");
+	shell_print(sh, "---");
 	if (all_done) {
 		shell_print(sh, "That was every line.");
 	}

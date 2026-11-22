@@ -103,6 +103,7 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "%u strobes x %u sense lines, press over %u, release under %u, comp %u",
 		    rows, cols, press, release, zmk_direct_ec_get_load_comp(dev));
 	print_tripwire(sh);
+	shell_print(sh, "");
 	print_grid(sh);
 	return 0;
 }
