@@ -1,26 +1,34 @@
 # zmk-direct-ec
 
-A ZMK module for electrostatic-capacitive keyboards that have no analog front end.
+A ZMK module for electrostatic-capacitive (EC) keyboards without an analog front end.
 
-A conventional EC board puts an analog mux, an op-amp and an integrating capacitor between the matrix and the microcontroller. Direct EC leaves all of that out. Each sense line of the matrix is wired straight to an ADC pin and each strobe line to a GPIO, and the microcontroller's own ADC does the rest.
+Conventional EC boards place an analog mux, op-amp, and integrating capacitor between the matrix and the microcontroller. Direct EC omits those components: each sense line connects directly to an ADC pin, and each strobe line connects to a GPIO.
 
-It works because a key couples its strobe to its sense line through a small capacitance that grows as the key goes down. The sense line is left floating. The driver samples it once with the strobe at rest, moves the strobe, and samples it again right away. The step between the two samples is the key's reading, and it is larger when the key is pressed. Taking a fresh reference before every edge is what makes a floating line usable, since its resting level drifts by more than a press over time.
+Each key couples its strobe to its sense line through a small capacitance that increases when pressed. Because the sense line is left floating, its resting voltage drifts over time. To cancel that drift, the driver samples the sense line with the strobe at rest, toggles the strobe, and samples again immediately. The difference between the two samples is the key's reading.
 
-The signal is small, a few hundred ADC counts for a full press, so the timing between the strobe edge and the sample matters a great deal. For that reason the driver does not use Zephyr's ADC API. It drives the converter's registers directly, and Zephyr's ADC driver has to be disabled on the board.
+Because a full press produces only a few hundred ADC counts, timing between the strobe edge and the ADC sample is tight. The driver accesses the ADC registers directly rather than using Zephyr's ADC API, so Zephyr's ADC driver must be disabled on the board.
+
+## Documentation
+
+- Building or tuning an existing board? See the [User & Tuning Guide](docs/user-guide.md) for testing your build and adjusting actuation thresholds.
+- Designing a PCB? Read the [PCB Design Guide](docs/design-guide.md) for pin selection, matrix topology, routing, and noise considerations.
+- Writing a new ZMK shield? Follow the [Shield Guide](docs/shield-guide.md) for step-by-step devicetree setup, Kconfig options, load compensation, and nRF52840 power tuning.
 
 ## Supported controllers
 
-The module runs on nRF52840, SAMD21 and RP2040. The scan loop, thresholds and calibration are shared, and each chip has its own backend for the part that touches the ADC. The backends differ enough that it is worth knowing which one you are on.
+The scan loop, thresholds, and calibration are shared; each chip has its own ADC backend.
 
-On nRF52840 the SAADC converts all sense lines in one go, so a pass is one scan with the strobes at rest, then one scan per strobe, with extra reference scans in between (every second strobe by default). The sense lines are never driven. This is the only backend with the low-power tier. An idle board stops scanning individual keys, raises every strobe at once, and takes a single reading per sense line. That is enough to tell that something is pressed somewhere, and when a line trips, the full per-key pass runs immediately and reports the press. The same cheap pass also runs between keystrokes while typing and while keys are held, so the full pass only runs when something changes. On a 36-key board with BLE connected this measured about 40 µA idle and about 0.6 mA while typing, against 1.5 mA for scanning continuously. Because the driver owns the SAADC, ZMK's normal battery driver cannot be used; the module has its own battery node, described below.
+| Controller | Max sense lines | ADC scan | Low-power idle | Notes |
+|---|---|---|---|---|
+| nRF52840 | 8 (4–6 on XIAO) | All channels in one pass | Yes (tripwire) | ~40 µA idle / ~0.6 mA typing on a 36-key BLE board (vs. 1.5 mA continuous). Requires `zmk,direct-ec-battery` instead of Zephyr's battery divider. |
+| SAMD21 | 8 (11 ADC pins on XIAO) | One channel at a time (~5 µs/conv) | No (USB) | Set `bias-pull-up` and `GPIO_ACTIVE_LOW` strobes to avoid a low-voltage ADC glitch. Keep default median filter. 32 KB RAM. |
+| RP2040 | 4 (GPIO26–29) | One channel at a time (~2 µs/conv) | No (USB) | No outlier samples; plain mean (`CONFIG_ZMK_KSCAN_DIRECT_EC_MEAN=y`) gives lower noise than median on noisy USB supplies. |
 
-On SAMD21 and RP2040 the ADC converts one channel at a time, so the pass goes cell by cell: the sense line is briefly pulled through the pad's internal pull resistor to bring it to a known level, released, converted, the strobe is moved, and it is converted again. These two scan continuously with no idle tier, so they are meant for boards that run from USB.
+On nRF52840, an idle board stops scanning individual keys, raises all strobes at once, and takes a single reading per sense line. When any line crosses the tripwire threshold, the full per-key scan runs immediately. This same check runs between keystrokes and while keys are held, so the full scan only runs when something changes.
 
-SAMD21 has a quirk. Some conversions of a high-impedance line read about 75 counts low, and it happens more often the lower the line sits. Priming with the pull-up instead of the pull-down keeps the line near the top of the range, where it does not happen. So on SAMD21 set `bias-pull-up` and declare the strobes `GPIO_ACTIVE_LOW`, and keep the default median. A conversion takes about 5 µs, which limits how many cells and samples fit in a scan period, and the chip has 32 KB of RAM.
+On SAMD21 and RP2040, the driver scans cell by cell: it briefly primes the sense line through the pad's internal pull resistor, releases it, samples, toggles the strobe, and samples again.
 
-RP2040 has only four ADC inputs, so a board is limited to four sense lines. Its converter is fast, 2 µs a conversion, and does not throw stray samples, so a plain mean of the samples gives lower noise than a median, especially on a noisy USB supply.
-
-## Configuration
+## Quick start
 
 Add the module to your `west.yml`:
 
@@ -35,7 +43,7 @@ manifest:
       revision: main
 ```
 
-Then describe the matrix in the shield's overlay. The sense pins are listed twice, once as ADC channel numbers and once as GPIOs in the same order, because devicetree cannot express both roles in one property. The channel number is the AIN index on nRF52840, the MUXPOS value on SAMD21 and the AINSEL value (0 to 3) on RP2040.
+Enable `CONFIG_INPUT=y` in your shield's `.conf`, disable `&adc`, and add a `zmk,kscan-direct-ec` node to your overlay:
 
 ```dts
 &adc { status = "disabled"; };
@@ -63,52 +71,35 @@ Then describe the matrix in the shield's overlay. The sense pins are listed twic
 };
 ```
 
-The driver is an input device that reports keys at (strobe, sense line). Reference it from the `input` property of your `zmk,physical-layout` node, with a matrix transform whose `rows` is the number of strobes and `columns` the number of sense lines. Do not also set a `kscan` property or a `zmk,kscan` chosen node. A matrix can have up to 8 sense lines, 16 strobes and 80 cells, and a build can have one such node.
+Key wiring rules:
 
-Each key with a `swing` presses at `actuation-percent` (default 40) of it and releases at two thirds of that, so a weak key and a strong one trip at the same depth. `ec calibrate` measures the swings and `ec export` prints the table. `press-threshold` and `release-threshold`, in ADC counts above each key's released level, cover keys whose swing is 0, such as a new board before it is calibrated. `load-comp-scale` corrects for the fact that every held key adds capacitance to its sense line and makes the other keys on that line read lower; it is off by default and worth fitting on boards with many keys per line. The remaining properties (`bias-us`, `prime-conversions`, `settle-us`, `bias-pull-up`) only apply to SAMD21 and RP2040. The driver skips any cell the matrix transform doesn't list; `sense-strobe-masks` overrides that, and is rarely needed. All of them are documented in `dts/bindings/kscan/zmk,kscan-direct-ec.yaml`.
+- Sense pins are listed twice in the same order: once in `ain-channels` (AIN index on nRF52840, MUXPOS on SAMD21, AINSEL 0–3 on RP2040) and once in `col-gpios`.
+- Each key with a `swing` entry actuates at `actuation-percent` (default 40) of its own swing and releases at two-thirds of that. `press-threshold` and `release-threshold` are fallbacks for keys with a swing of 0 (such as an uncalibrated board).
+- The driver is a ZMK input device reporting `(strobe, sense)`. Reference it from your `zmk,physical-layout` node's `input` property (with a matrix transform where `rows` = strobes and `columns` = sense lines). Do not set a `kscan` property or a `zmk,kscan` chosen node.
+- Limits: up to 8 sense lines, 16 strobes, 80 cells, and one `zmk,kscan-direct-ec` node per build.
 
-The Kconfig options are in `drivers/kscan/Kconfig`. The ones most boards will touch are `CONFIG_ZMK_KSCAN_DIRECT_EC_NAVG`, the number of samples taken per key per pass (default 4), the choice of how those samples are combined (median, trimmed mean or mean), and on nRF52840 `CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE_THRESHOLD`, which sets how far a sense line has to move to wake the per-key scan. Set `CONFIG_ZMK_KSCAN_DIRECT_EC_TRIPWIRE=n` for an nRF52840 board that is always on USB.
-
-For battery level on nRF52840, add a `zmk,direct-ec-battery` node in place of `zmk,battery-voltage-divider` and point the `zmk,battery` chosen node at it. It takes the same divider description:
-
-```dts
-ec_battery: ec_battery {
-    compatible = "zmk,direct-ec-battery";
-    ain-channel = <7>;
-    power-gpios = <&gpio0 14 (GPIO_OPEN_DRAIN | GPIO_ACTIVE_LOW)>;
-    output-ohms = <510000>;
-    full-ohms = <1510000>;
-};
-```
-
-The scan thread reads the divider between idle passes, so the value does not update while a key is held down.
+See the [Shield Guide](docs/shield-guide.md) for full setup details, Kconfig options (`drivers/kscan/Kconfig`), devicetree properties (`dts/bindings/kscan/zmk,kscan-direct-ec.yaml`), and the nRF52840 battery node.
 
 ## Measuring a board
 
-Signal levels depend on the PCB, the domes and the plate, so thresholds have to be measured on the actual board. Build with the `direct-ec-shell` snippet to get the `ec` commands on a USB serial port: `-S direct-ec-shell` on the `west build` line, or `snippet: direct-ec-shell` in `build.yaml`. It works on nRF52840, SAMD21 and RP2040, and the board still types. It's an image for measuring, not the one to run day to day.
+Signal levels depend on the PCB, domes, and plate, so thresholds must be measured on the assembled board. Build a measurement image with the `direct-ec-shell` snippet (`-S direct-ec-shell` on `west build`, or `snippet: direct-ec-shell` in `build.yaml`) to expose the `ec` commands over USB serial.
 
-The commands, in the order a board designer runs them:
+Run these in order when bringing up a new design:
 
-| Command | What you do | What you get |
+| Command | Action | Output |
 |---|---|---|
-| `ec rest` | keep your hands off | each key's resting level and noise; open, held, shorted or noisy keys flagged |
-| `ec fit` | hold the keys it shows down one after another, then let go | `load-comp-scale`, applied until reset |
-| `ec calibrate` | press every key, once or a few times | each key's swing, used until reset; weak, missing and marginal keys |
-| `ec export` | nothing | `actuation-percent`, the fallback thresholds, `load-comp-scale` and the swing table as devicetree lines to paste |
+| `ec rest` | Hands off | Each key's resting level and noise; flags open, held, shorted, or noisy keys |
+| `ec fit` | Hold keys on each line as prompted, then release | `load-comp-scale` value (applied until reset) |
+| `ec calibrate` | Press every key all the way down | Per-key swing (applied until reset); flags weak, missed, or marginal keys |
+| `ec export` | None | Ready-to-paste devicetree lines for `actuation-percent`, fallback thresholds, `load-comp-scale`, and `swing` table |
 
-Someone checking a build of an existing design only needs `ec rest`, then `ec calibrate`.
-
-`fit`, `calibrate` and `rest` draw the board from the selected physical layout when it has key positions, and fall back to a strobe × sense line grid when it doesn't. While a command runs, no key reaches the host, so pressing keys doesn't type into the terminal. Every command ends by itself.
-
-A key is marginal when its press point is under three times its own idle noise from `ec rest`; `calibrate` and `export` name such keys. `ec threshold 35%` changes the percent on the running board, `ec threshold <press> <release>` the fallback counts, and `ec comp <K>` the compensation, so you can try them. `ec zero` takes the resting levels again. `ec status` prints one pass of every cell's baseline and reading. On nRF52840 it also shows what each sense line reads in the idle pass and the largest reading seen while quiet; the tripwire threshold should sit several times above that quiet maximum and well below what the weakest key adds.
-
-Nothing set from the shell is stored. Once the numbers are right, put them in the overlay and the shield's `.conf`.
+If you are checking a build of an existing design, `ec rest` followed by `ec calibrate` is usually enough. While a command runs, keystrokes are suppressed so they do not type into your terminal. Nothing set from the shell is persisted; copy the final values into your overlay and `.conf` and rebuild without the shell snippet for daily use.
 
 ## Limitations
 
-The resting levels are taken at power-on, so no key may be held while the board starts. `ec zero` takes them again. Swings measured in the shell are not stored yet: paste them into devicetree. The resting levels in `ec export` are a reference only; the driver does not compare against them.
-
-On nRF52840, leave `CONFIG_ZMK_SLEEP` off. An EC key cannot wake the chip from deep sleep, and the idle tier already brings the scan cost down to tens of microamps.
+- Power-on zeroing: Resting levels are captured at boot, so no key may be held while the board powers on. (`ec zero` re-captures them in the shell.)
+- No stored calibration yet: `actuation-percent`, `swing`, fallback thresholds, and `load-comp-scale` are compiled into devicetree rather than saved in flash.
+- No deep sleep on nRF52840: Leave `CONFIG_ZMK_SLEEP` disabled. An EC key cannot wake the chip from deep sleep, and the idle tripwire tier already brings idle draw down to tens of microamps.
 
 ## License
 
