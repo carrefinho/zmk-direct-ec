@@ -13,6 +13,7 @@ Because a full press produces only a few hundred ADC counts, timing between the 
 - Building or tuning an existing board? See the [User & Tuning Guide](docs/user-guide.md) for testing your build and adjusting actuation thresholds.
 - Designing a PCB? Read the [PCB Design Guide](docs/design-guide.md) for pin selection, matrix topology, routing, and noise considerations.
 - Writing a new ZMK shield? Follow the [Shield Guide](docs/shield-guide.md) for step-by-step devicetree setup, Kconfig options, load compensation, and nRF52840 power tuning.
+- Curious how it works or porting a new MCU? Read the [Architecture & Porting Guide](docs/architecture.md).
 
 ## Supported controllers
 
